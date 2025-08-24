@@ -26,7 +26,6 @@ jobs:
         cp -r scripts deployment/ 2>/dev/null || mkdir -p deployment/scripts
         cp requirements.txt deployment/
         cp Dockerfile deployment/
-        cp docker-compose.prod.yml deployment/docker-compose.yml
         cp .dockerignore deployment/
         
         # Create .env file with production secrets
@@ -90,16 +89,22 @@ jobs:
       run: |
         scp -i ~/.ssh/ec2_key.pem deployment.tar.gz ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/
     
-    - name: Deploy on EC2
+    - name: Deploy on EC2 (Simple Docker Method)
       run: |
         ssh -i ~/.ssh/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'ENDSSH'
-        # Stop existing containers and clean up
+        echo "🚀 Starting deployment (bypassing docker-compose)..."
+        
+        # Stop and remove ALL containers
+        echo "📦 Stopping existing containers..."
+        docker stop $(docker ps -aq) 2>/dev/null || true
+        docker rm $(docker ps -aq) 2>/dev/null || true
+        
+        # Clean up Docker system
+        echo "🧹 Cleaning up Docker..."
+        docker system prune -af --volumes || true
+        
+        # Backup and prepare directory
         if [ -d ~/skinsense-backend ]; then
-          cd ~/skinsense-backend
-          docker-compose down -v || true
-          docker system prune -f || true
-          cd ~
-          # Backup existing deployment
           mv ~/skinsense-backend ~/skinsense-backend.backup.$(date +%Y%m%d_%H%M%S)
         fi
         
@@ -111,21 +116,49 @@ jobs:
         tar -xzf ~/deployment.tar.gz
         rm ~/deployment.tar.gz
         
-        # Build and start containers fresh
-        docker-compose build --no-cache
-        docker-compose up -d --force-recreate --remove-orphans
+        # Build the Docker image
+        echo "🔨 Building Docker image..."
+        docker build -t skinsense-api:latest .
+        
+        # Start Redis container
+        echo "🚀 Starting Redis..."
+        docker run -d \
+          --name redis \
+          --restart always \
+          -p 6379:6379 \
+          redis:7-alpine
+        
+        # Wait for Redis to be ready
+        sleep 3
+        
+        # Start API container
+        echo "🚀 Starting API..."
+        docker run -d \
+          --name api \
+          --restart always \
+          -p 8000:8000 \
+          --link redis:redis \
+          -e REDIS_URL=redis://redis:6379 \
+          --env-file .env \
+          skinsense-api:latest
         
         # Wait for services to be healthy
         sleep 10
         
-        # Check if services are running
-        docker-compose ps
+        # Check if containers are running
+        echo "✅ Checking services..."
+        docker ps
         
-        # Show logs
-        docker-compose logs --tail=50
+        # Show API logs
+        echo "📋 API logs:"
+        docker logs api --tail=50
         
         # Health check
-        curl -f http://localhost:8000/health || exit 1
+        curl -f http://localhost:8000/health || {
+          echo "⚠️ Health check failed. Checking logs..."
+          docker logs api --tail=100
+          exit 1
+        }
         
         echo "✅ Deployment successful!"
         echo "AWS credentials are configured in the app's .env file for S3 access"
@@ -146,9 +179,8 @@ jobs:
           echo "API URL: http://${{ secrets.EC2_HOST }}:8000"
           echo "Documentation: http://${{ secrets.EC2_HOST }}:8000/docs"
           echo ""
-          echo "✅ AWS credentials are configured in the app for:"
-          echo "  - S3 image uploads"
-          echo "  - CloudFront CDN access"
+          echo "✅ Deployment method: Plain Docker (no docker-compose)"
+          echo "✅ AWS credentials configured for S3/CloudFront access"
         else
           echo "❌ Deployment failed. Check the logs for details."
         fi
