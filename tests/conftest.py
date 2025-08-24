@@ -1,35 +1,35 @@
 import pytest
-import asyncio
 from httpx import AsyncClient
-from motor.motor_asyncio import AsyncIOMotorClient
+import pymongo
 from app.main import app
-from app.database import db
+from app.database import db, get_database
 from app.config import settings
+from unittest.mock import MagicMock
+import os
 
-# Test database URL
-TEST_DB_URL = "mongodb://localhost:27017/skinsense_test"
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create event loop for async tests"""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+# Test database URL - use local MongoDB for tests
+TEST_DB_URL = os.getenv("TEST_MONGODB_URL", "mongodb://localhost:27017/skinsense_test")
 
 @pytest.fixture(scope="function")
-async def test_db():
-    """Create test database connection"""
+def test_db():
+    """Create test database connection using PyMongo"""
     # Connect to test database
-    test_client = AsyncIOMotorClient(TEST_DB_URL)
+    test_client = pymongo.MongoClient(TEST_DB_URL)
     test_database = test_client.skinsense_test
     
-    # Override database connection
+    # Clear test database before tests
+    for collection_name in test_database.list_collection_names():
+        test_database[collection_name].drop()
+    
+    # Override database connection in app
+    original_db = db.database
     db.database = test_database
     
     yield test_database
     
     # Cleanup after test
-    await test_client.drop_database("skinsense_test")
+    test_client.drop_database("skinsense_test")
+    db.database = original_db
     test_client.close()
 
 @pytest.fixture
@@ -63,3 +63,31 @@ async def auth_headers(client):
     token = response.json()["access_token"]
     
     return {"Authorization": f"Bearer {token}"}
+
+@pytest.fixture
+def mock_orbo_service():
+    """Mock ORBO AI service for tests"""
+    mock = MagicMock()
+    mock.analyze_skin.return_value = {
+        "overall_skin_health_score": 85,
+        "hydration": 75,
+        "smoothness": 80,
+        "radiance": 90,
+        "dark_spots": 70,
+        "firmness": 85,
+        "fine_lines_wrinkles": 80,
+        "acne": 95,
+        "dark_circles": 75,
+        "redness": 85
+    }
+    return mock
+
+@pytest.fixture
+def mock_openai_service():
+    """Mock OpenAI service for tests"""
+    mock = MagicMock()
+    mock.generate_feedback.return_value = {
+        "feedback": "Your skin looks great! Keep up the good routine.",
+        "recommendations": ["Use sunscreen daily", "Stay hydrated"]
+    }
+    return mock
