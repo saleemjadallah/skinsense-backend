@@ -1,0 +1,89 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  DOCKER_REGISTRY: docker.io
+  IMAGE_NAME: skinsense-backend
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+    
+    - name: Log in to Docker Hub
+      if: github.event_name != 'pull_request'
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+    
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v4
+      with:
+        images: ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+    
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v4
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: ${{ github.event_name != 'pull_request' }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        build-args: |
+          VERSION=${{ github.sha }}
+          BUILD_DATE=${{ github.event.head_commit.timestamp }}
+    
+    - name: Update deployment on EC2 (if main branch)
+      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      run: |
+        # Setup SSH
+        mkdir -p ~/.ssh
+        echo "${{ secrets.EC2_KEY }}" | base64 -d > ~/.ssh/ec2_key.pem
+        chmod 600 ~/.ssh/ec2_key.pem
+        ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+        
+        # Update Docker image on EC2
+        ssh -i ~/.ssh/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << ENDSSH
+        cd ~/skinsense-backend
+        
+        # Pull latest image
+        docker pull ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+        
+        # Update docker-compose to use the new image
+        sed -i 's|build: .|image: ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest|g' docker-compose.yml
+        
+        # Restart containers with new image
+        docker-compose down
+        docker-compose up -d
+        
+        # Clean up old images
+        docker image prune -f
+        
+        echo "✅ Docker image updated on EC2!"
+        ENDSSH
+        
+        # Clean up
+        rm -f ~/.ssh/ec2_key.pem
