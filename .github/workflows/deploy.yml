@@ -117,6 +117,9 @@ jobs:
         docker ps -aq | xargs -r docker rm -f 2>/dev/null || true
         docker volume ls -q | xargs -r docker volume rm -f 2>/dev/null || true
         
+        # Specifically remove the skinsense-backend network if it exists
+        docker network rm skinsense-backend_default 2>/dev/null || true
+        
         # Remove all custom networks (keep default ones)
         docker network ls --format "{{.Name}}" | grep -v "bridge\|host\|none" | xargs -r docker network rm 2>/dev/null || true
         docker network prune -f 2>/dev/null || true
