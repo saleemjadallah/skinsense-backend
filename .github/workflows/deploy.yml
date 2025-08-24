@@ -91,14 +91,30 @@ jobs:
         ssh -i ~/.ssh/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'ENDSSH'
         echo "🚀 Starting deployment with Docker Compose..."
         
-        # First, let's clean up any problematic containers
-        echo "📦 Cleaning up old containers..."
-        docker stop $(docker ps -aq) 2>/dev/null || true
-        docker rm $(docker ps -aq) 2>/dev/null || true
-        docker system prune -af --volumes || true
+        # Step 1: Remove specific problematic containers by name pattern
+        echo "📦 Step 1: Removing problematic containers by name..."
+        docker ps -a --format "{{.Names}}" | grep -E "skinsense-backend_" | xargs -r docker rm -f 2>/dev/null || true
         
-        # Remove all images to avoid ContainerConfig issues
-        docker rmi $(docker images -q) 2>/dev/null || true
+        # Step 2: Stop ALL containers
+        echo "📦 Step 2: Stopping all containers..."
+        docker stop $(docker ps -aq) 2>/dev/null || true
+        
+        # Step 3: Remove ALL containers
+        echo "📦 Step 3: Removing all containers..."
+        docker rm -f $(docker ps -aq) 2>/dev/null || true
+        
+        # Step 4: Remove specific volumes that might be corrupted
+        echo "📦 Step 4: Removing volumes..."
+        docker volume rm skinsense-backend_redis_data 2>/dev/null || true
+        docker volume prune -f || true
+        
+        # Step 5: Remove all images to ensure fresh build
+        echo "📦 Step 5: Removing all Docker images..."
+        docker rmi -f $(docker images -q) 2>/dev/null || true
+        
+        # Step 6: Complete system prune
+        echo "📦 Step 6: Final Docker system cleanup..."
+        docker system prune -af --volumes || true
         
         # Backup old deployment
         if [ -d ~/skinsense-backend ]; then
@@ -122,6 +138,10 @@ jobs:
         
         echo "✅ docker-compose.yml found. Contents:"
         cat docker-compose.yml
+        
+        # Step 7: Run docker-compose down in the new directory to ensure clean state
+        echo "📦 Step 7: Running docker-compose down to ensure clean state..."
+        docker-compose down -v --remove-orphans 2>/dev/null || true
         
         # Update docker-compose if needed (for older versions)
         if command -v docker-compose &> /dev/null; then
