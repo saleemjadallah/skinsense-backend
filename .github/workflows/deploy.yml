@@ -114,11 +114,22 @@ jobs:
         
         # STEP 3: Nuclear cleanup of corrupted containers
         echo "📦 Step 3: Removing corrupted containers, volumes, and networks..."
+        
+        # Stop and remove all containers related to skinsense
+        docker ps -a --format "{{.Names}}" | grep -E "skinsense|backend" | xargs -r docker rm -f 2>/dev/null || true
         docker ps -aq | xargs -r docker rm -f 2>/dev/null || true
+        
+        # Remove volumes
+        docker volume ls -q | grep -E "skinsense|backend" | xargs -r docker volume rm -f 2>/dev/null || true
         docker volume ls -q | xargs -r docker volume rm -f 2>/dev/null || true
         
-        # Specifically remove the skinsense-backend network if it exists
+        # Force remove the skinsense networks (multiple attempts)
+        echo "Removing Docker networks..."
+        docker network disconnect -f skinsense-backend_default $(docker ps -aq) 2>/dev/null || true
+        docker network disconnect -f skinsense_network $(docker ps -aq) 2>/dev/null || true
         docker network rm skinsense-backend_default 2>/dev/null || true
+        docker network rm skinsense_network 2>/dev/null || true
+        docker network rm $(docker network ls -q --filter "name=skinsense") 2>/dev/null || true
         
         # Remove all custom networks (keep default ones)
         docker network ls --format "{{.Name}}" | grep -v "bridge\|host\|none" | xargs -r docker network rm 2>/dev/null || true
@@ -159,18 +170,30 @@ jobs:
         # Deploy with docker-compose (v2 should work without ContainerConfig issues)
         echo "🔨 Building and deploying with Docker Compose v2..."
         
+        # Final network cleanup before deployment
+        echo "Final network cleanup..."
+        docker network rm skinsense-backend_default 2>/dev/null || true
+        docker network rm skinsense_network 2>/dev/null || true
+        docker network ls | grep skinsense | awk '{print $2}' | xargs -r docker network rm 2>/dev/null || true
+        
         # Use the new docker compose command (without hyphen) if available
         if command -v docker &> /dev/null && docker compose version &> /dev/null; then
           echo "Using Docker Compose v2 plugin..."
+          # Remove any existing containers first
+          docker compose down --volumes --remove-orphans 2>/dev/null || true
+          # Build and deploy
           docker compose build --no-cache
-          docker compose up -d --force-recreate --remove-orphans
+          docker compose up -d --force-recreate --remove-orphans --renew-anon-volumes
           sleep 10
           docker compose ps
           docker compose logs --tail=50
         else
           echo "Using standalone docker-compose..."
+          # Remove any existing containers first
+          docker-compose down --volumes --remove-orphans 2>/dev/null || true
+          # Build and deploy
           docker-compose build --no-cache
-          docker-compose up -d --force-recreate --remove-orphans
+          docker-compose up -d --force-recreate --remove-orphans --renew-anon-volumes
           sleep 10
           docker-compose ps
           docker-compose logs --tail=50
