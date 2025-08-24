@@ -1,0 +1,6 @@
+# SkinSense Daily Reminder Generation
+# Run at 6:00 AM every day to generate personalized reminders for all active users
+0 6 * * * cd /home/ubuntu/skinsense-backend && docker-compose exec -T api python3 /app/scripts/generate_daily_reminders.py >> /home/ubuntu/logs/reminder_generation.log 2>&1
+
+# Alternative: If running without Docker
+# 0 6 * * * cd /home/ubuntu/skinsense-backend && /usr/bin/python3 scripts/generate_daily_reminders.py >> /home/ubuntu/logs/reminder_generation.log 2>&1

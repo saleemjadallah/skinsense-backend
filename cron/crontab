@@ -1,0 +1,15 @@
+# SkinSense AI Cron Jobs Configuration
+# 
+# Format: minute hour day-of-month month day-of-week command
+# 
+# This file should be installed on the production server using:
+# crontab /path/to/crontab
+
+# Generate daily insights for all users at 6 AM server time
+0 6 * * * cd /app && /usr/bin/python3 app/scripts/generate_daily_insights.py >> /var/log/skinsense/insights_cron.log 2>&1
+
+# Clean up old insights (run weekly on Sunday at 3 AM)
+0 3 * * 0 cd /app && /usr/bin/python3 -c "from app.database import db; from datetime import datetime, timedelta; db.daily_insights.delete_many({'created_at': {'$lt': datetime.utcnow() - timedelta(days=30)}})" >> /var/log/skinsense/cleanup.log 2>&1
+
+# Health check for insights generation (every 12 hours)
+0 */12 * * * cd /app && /usr/bin/python3 -c "from app.database import db; from datetime import datetime; count = db.daily_insights.count_documents({'created_at': {'$gte': datetime.utcnow().replace(hour=0, minute=0, second=0)}}); print(f'Generated insights today: {count}')" >> /var/log/skinsense/health_check.log 2>&1

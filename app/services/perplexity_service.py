@@ -1,0 +1,1158 @@
+import httpx
+import json
+import asyncio
+from typing import Dict, Any, List, Optional
+from datetime import datetime, timedelta, timezone
+from pymongo.database import Database
+from bson import ObjectId
+import logging
+import re
+
+from app.core.config import settings
+from app.models.user import UserModel
+
+logger = logging.getLogger(__name__)
+
+class PerplexityRecommendationService:
+    def __init__(self):
+        # Use longer timeout for more reliable responses
+        self.client = httpx.AsyncClient(timeout=60.0)
+        self.api_key = settings.PERPLEXITY_API_KEY
+        self.base_url = "https://api.perplexity.ai/chat/completions"
+        
+        # Cache settings
+        self.cache_ttl_hours = 24
+        self.max_cached_products_per_user = 50
+        
+        # Rate limiting settings (from your successful config)
+        self.requests_per_minute = 20
+        self.delay_between_requests = 2  # seconds
+        self.last_request_time = None
+    
+    async def get_personalized_recommendations(
+        self,
+        user: UserModel,
+        skin_analysis: Dict[str, Any],
+        user_location: Dict[str, str],
+        db: Database,
+        limit: int = 5
+    ) -> Dict[str, Any]:
+        """
+        Generate personalized product recommendations using Perplexity + smart caching
+        """
+        try:
+            # Step 1: Check user's cached favorites first
+            cached_recommendations = await self._get_cached_recommendations(
+                user, skin_analysis, db, limit=3
+            )
+            
+            # Step 2: Get fresh Perplexity recommendations
+            fresh_limit = limit - len(cached_recommendations)
+            fresh_recommendations = []
+            
+            if fresh_limit > 0:
+                if self.api_key:
+                    logger.info(f"Calling Perplexity API for {fresh_limit} fresh recommendations")
+                    fresh_recommendations = await self._get_perplexity_recommendations(
+                        skin_analysis, user, user_location, limit=fresh_limit
+                    )
+                    
+                    # Cache successful recommendations
+                    if fresh_recommendations:
+                        logger.info(f"Got {len(fresh_recommendations)} fresh recommendations from Perplexity")
+                        await self._cache_recommendations(user.id, fresh_recommendations, skin_analysis, db)
+                    else:
+                        logger.warning("Perplexity returned empty recommendations")
+                else:
+                    logger.warning("Perplexity API key not configured - using fallback products")
+            
+            # Step 3: Combine and format results
+            all_recommendations = cached_recommendations + fresh_recommendations
+            
+            # If no recommendations from either source, return error
+            if not all_recommendations:
+                logger.error("CRITICAL: No recommendations from cache or Perplexity API")
+                # Return empty with error message instead of fallback
+                return {
+                    "recommendations": [],
+                    "routine_suggestions": {},
+                    "shopping_list": {},
+                    "source_mix": {
+                        "cached_favorites": len(cached_recommendations),
+                        "fresh_search": len(fresh_recommendations),
+                        "total": 0
+                    },
+                    "error": "Failed to get product recommendations from Perplexity API",
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "location": user_location
+                }
+            
+            # Step 4: Build complete response
+            return {
+                "recommendations": all_recommendations[:limit],
+                "routine_suggestions": self._build_routine_from_products(all_recommendations),
+                "shopping_list": self._generate_shopping_list(all_recommendations),
+                "source_mix": {
+                    "cached_favorites": len(cached_recommendations),
+                    "fresh_search": len(fresh_recommendations),
+                    "total": len(all_recommendations)
+                },
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "location": user_location
+            }
+            
+        except Exception as e:
+            logger.error(f"Recommendation generation failed: {e}")
+            # Return error instead of fallback
+            return {
+                "recommendations": [],
+                "routine_suggestions": {},
+                "shopping_list": {},
+                "error": str(e),
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "location": user_location
+            }
+    
+    async def _get_perplexity_recommendations(
+        self,
+        skin_analysis: Dict[str, Any],
+        user: UserModel,
+        user_location: Dict[str, str],
+        limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        Get fresh product recommendations from Perplexity API with retry logic and rate limiting
+        """
+        max_retries = 3
+        retry_delay = 1.0
+        
+        for attempt in range(max_retries):
+            try:
+                # Apply rate limiting
+                if self.last_request_time:
+                    time_since_last = datetime.now(timezone.utc) - self.last_request_time
+                    if time_since_last.total_seconds() < self.delay_between_requests:
+                        await asyncio.sleep(self.delay_between_requests - time_since_last.total_seconds())
+                
+                self.last_request_time = datetime.now(timezone.utc)
+                
+                # Build search query
+                query = self._build_perplexity_query(skin_analysis, user, user_location, limit)
+                
+                # Make Perplexity API call with timeout
+                response = await self.client.post(
+                    self.base_url,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": "llama-3.1-sonar-small-128k-online",  # Updated to latest online model for real-time product search
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": self._get_system_prompt()
+                            },
+                            {
+                                "role": "user", 
+                                "content": query
+                            }
+                        ],
+                        "max_tokens": 2000,  # Optimized for product recommendations
+                        "temperature": 0.3,  # Lower for more consistent product results
+                        "return_citations": True,
+                        "return_related_questions": False
+                    }
+                )
+                
+                response.raise_for_status()
+                result = response.json()
+                
+                # Log the raw response for debugging
+                logger.info(f"Perplexity API response status: {response.status_code}")
+                logger.debug(f"Perplexity API raw response: {json.dumps(result, default=str)[:500]}...")
+                
+                # Validate response
+                if not result.get("choices") or not result["choices"][0].get("message"):
+                    logger.error(f"Invalid Perplexity response structure: {result.keys()}")
+                    raise ValueError("Invalid response format from Perplexity API")
+                
+                # Parse and structure the response
+                recommendations = self._parse_perplexity_response(
+                    result, skin_analysis, user_location
+                )
+                
+                if recommendations:
+                    logger.info(f"Successfully retrieved {len(recommendations)} recommendations from Perplexity")
+                    return recommendations
+                else:
+                    logger.warning("No recommendations parsed from Perplexity response")
+                
+            except httpx.TimeoutException as e:
+                logger.warning(f"Perplexity API timeout (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+            except httpx.HTTPStatusError as e:
+                logger.error(f"Perplexity API HTTP error (attempt {attempt + 1}/{max_retries}): {e.response.status_code}")
+                if e.response.status_code in [429, 503] and attempt < max_retries - 1:
+                    # Rate limit or service unavailable - retry
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2
+                else:
+                    break
+            except Exception as e:
+                logger.error(f"Perplexity API call failed (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+                else:
+                    break
+        
+        return []
+    
+    def _build_perplexity_query(
+        self,
+        skin_analysis: Dict[str, Any],
+        user: UserModel,
+        user_location: Dict[str, str],
+        limit: int
+    ) -> str:
+        """
+        Build comprehensive search query for Perplexity using the detailed prompt template
+        """
+        # Extract skin analysis scores from ORBO response
+        # The structure is: skin_analysis -> orbo_response -> metrics
+        orbo_data = skin_analysis.get("orbo_response", {})
+        metrics = orbo_data.get("metrics", {})
+        
+        # If metrics not found, try direct access (for backwards compatibility)
+        if not metrics and "metrics" in skin_analysis:
+            metrics = skin_analysis.get("metrics", {})
+        
+        # Log what we found for debugging
+        logger.info(f"ORBO metrics found: {metrics.keys() if metrics else 'No metrics found'}")
+        
+        # Map ORBO metrics to our prompt template scores
+        # These are already in 0-100 format from the backend
+        overall_score = metrics.get("overall_skin_health_score", 70)
+        hydration_score = metrics.get("hydration", 70)
+        acne_score = metrics.get("acne", 70)  # Already inverted by backend
+        wrinkles_score = metrics.get("fine_lines_wrinkles", 70)  # Already inverted
+        pigmentation_score = metrics.get("dark_spots", 70)  # Already inverted
+        texture_score = metrics.get("smoothness", 70)
+        sensitivity_score = metrics.get("redness", 70)  # Already inverted
+        firmness_score = metrics.get("firmness", 70)
+        brightness_score = metrics.get("radiance", 70)
+        undereye_score = metrics.get("dark_circles", 70)  # Already inverted
+        
+        # For pores and oiliness, we'll use related metrics
+        pores_score = 100 - metrics.get("acne", 30)  # Use acne as proxy for pores
+        oiliness_score = 100 - metrics.get("radiance", 50)  # Use radiance inverse as proxy for oiliness
+        
+        # Extract required ingredients from ORBO analysis
+        required_ingredients = orbo_data.get("recommended_ingredients", [])
+        if not required_ingredients:
+            # Build ingredient list based on metrics
+            required_ingredients = self._determine_required_ingredients(metrics, skin_analysis)
+        
+        # User profile data - get from onboarding preferences
+        age_range = self._format_age_range(user.onboarding.age_group) if user.onboarding else "25-34"
+        skin_type = user.onboarding.skin_type if user.onboarding else skin_analysis.get("skin_type", "normal")
+        gender = user.onboarding.gender if user.onboarding else "prefer_not_to_say"
+        
+        # Location and preferences
+        city = user_location.get('city', 'Unknown City')
+        state = user_location.get('state', 'Unknown State')
+        user_location_str = f"{city}, {state}"
+        
+        # TODO: Get these from user preferences
+        shopping_preference = "both"
+        preferred_retailers = "Sephora, Ulta, Target, Amazon"
+        local_climate = self._determine_climate(state)
+        current_season = self._get_current_season()
+        
+        query = f"""Based on the following skin analysis results, user profile, and location, provide personalized skincare product recommendations that are available for purchase in the user's area:
+
+**SKIN ANALYSIS DATA (from ORBO):**
+- Overall Skin Health Score: {overall_score}/100
+- Hydration Level: {hydration_score}/100
+- Acne/Blemishes: {acne_score}/100
+- Fine Lines/Wrinkles: {wrinkles_score}/100
+- Dark Spots/Pigmentation: {pigmentation_score}/100
+- Pore Size: {pores_score}/100
+- Skin Texture/Smoothness: {texture_score}/100
+- Redness/Sensitivity: {sensitivity_score}/100
+- Oiliness Level: {oiliness_score}/100
+- Firmness/Elasticity: {firmness_score}/100
+- Brightness/Radiance: {brightness_score}/100
+- Under-eye Area: {undereye_score}/100
+
+**REQUIRED INGREDIENTS (from ORBO analysis):
+{', '.join(required_ingredients) if required_ingredients else 'Hyaluronic Acid, Niacinamide, Ceramides'}
+
+**USER PROFILE:**
+- Age Range: {age_range}
+- Skin Type: {skin_type}
+- Gender: {gender}
+
+**LOCATION & PREFERENCES:**
+- City/Region: {user_location_str}
+- Preferred Shopping Method: {shopping_preference}
+- Preferred Retailers: {preferred_retailers}
+- Climate: {local_climate}
+- Season: {current_season}
+
+**INSTRUCTIONS:**
+Please provide a comprehensive response with the following structure:
+
+1. **PRIORITY ANALYSIS** (2-3 sentences)
+   - Identify the top 3 skin concerns based on the lowest scores
+   - Explain how the required ingredients address these concerns
+
+2. **PRODUCT RECOMMENDATIONS** (organized by routine step)
+   For each product category needed, provide:
+   - **Product Name & Brand**
+   - **Key Active Ingredients** (emphasizing the required ingredients)
+   - **Why It's Recommended** (specific to their skin analysis)
+   - **Expected Results Timeline**
+   - **Where to Buy Locally** (specific stores/websites in their area)
+   - **Price Range**
+   - **Usage Instructions**
+   
+   Categories to cover (as needed):
+   - Morning Cleanser
+   - Evening Cleanser/Oil Cleanser
+   - Treatment Products (serums, acids, etc.)
+   - Moisturizer (AM/PM)
+   - Sunscreen
+   - Spot Treatments
+   - Weekly Treatments (masks, exfoliants)
+
+3. **ROUTINE RECOMMENDATIONS**
+   - **Morning Routine** (step-by-step)
+   - **Evening Routine** (step-by-step)
+   - **Weekly Additions**
+   - **Product Introduction Schedule** (for sensitive skin or multiple new products)
+
+4. **LOCAL AVAILABILITY**
+   - List specific stores in {user_location_str} where products can be found
+   - Online retailers that deliver to their area
+   - Local beauty stores or pharmacies
+   - Estimated delivery times for online orders
+
+5. **BUDGET OPTIMIZATION**
+   - Priority products to buy first within their budget
+   - High-impact/low-cost alternatives
+   - When to invest in premium vs drugstore options
+
+6. **SEASONAL CONSIDERATIONS**
+   - How current weather/season affects product choices
+   - Any routine adjustments needed for {current_season}
+
+7. **PROGRESS TRACKING**
+   - What improvements to expect in 2 weeks, 1 month, 3 months
+   - Which skin scores should improve first
+   - When to reassess and potentially add new products
+
+**IMPORTANT GUIDELINES:**
+- Only recommend products that are actually available in the user's location
+- Include a mix of price points unless budget is very restricted
+- Prioritize products containing the required ingredients from the skin analysis
+- Consider local climate and seasonal factors
+- Provide specific retailer names and locations
+- Include both immediate-action and long-term products
+- Be sensitive to the user's experience level with skincare
+- Mention any potential purging or adjustment periods
+- Include gentle alternatives for sensitive skin types
+
+Focus on finding {limit} highly-rated products that are currently in stock and match the skin analysis results."""
+        
+        return query
+    
+    def _get_system_prompt(self) -> str:
+        """
+        System prompt for Perplexity to ensure consistent, structured responses
+        """
+        return """You are SkinSense AI's intelligent beauty advisor, specialized in providing personalized skincare product recommendations based on scientific skin analysis data, user preferences, and location-specific availability. Your role is to bridge the gap between professional skin analysis results and actionable, purchase-ready product recommendations.
+
+IMPORTANT GUIDELINES:
+- Only recommend products that are currently available and in stock
+- Include accurate, current pricing information
+- Provide specific local store locations when possible
+- Focus on products with proven ingredients for their specific concerns
+- Ensure all recommendations are from reputable brands and retailers
+- Include practical usage instructions
+- Explain why each product matches their skin analysis results
+- Prioritize products with strong customer reviews and ratings
+- Be sensitive to the user's experience level with skincare
+- Consider local climate and seasonal factors
+
+FORMAT REQUIREMENTS:
+- Follow the exact structure requested in the prompt
+- Structure responses clearly with product details
+- Include both online and local availability 
+- Provide price ranges, not exact prices
+- Focus on actionable, helpful information
+- Keep explanations clear and encouraging
+- Use markdown formatting for better readability"""
+    
+    def _parse_perplexity_response(
+        self,
+        response: Dict[str, Any],
+        skin_analysis: Dict[str, Any],
+        user_location: Dict[str, str]
+    ) -> List[Dict[str, Any]]:
+        """
+        Parse Perplexity response into structured product recommendations
+        """
+        try:
+            content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
+            citations = response.get("citations", [])
+            
+            # Extract structured sections from the response
+            recommendations = self._extract_structured_products(
+                content, skin_analysis, user_location, citations
+            )
+            
+            return recommendations
+            
+        except Exception as e:
+            logger.error(f"Failed to parse Perplexity response: {e}")
+            return []
+    
+    def _extract_structured_products(
+        self,
+        content: str,
+        skin_analysis: Dict[str, Any],
+        user_location: Dict[str, str],
+        citations: List[str]
+    ) -> List[Dict[str, Any]]:
+        """
+        Extract structured product data from Perplexity's comprehensive response
+        """
+        products = []
+        
+        # Parse the structured response sections
+        sections = self._parse_response_sections(content)
+        
+        # Extract products from the PRODUCT RECOMMENDATIONS section
+        if sections.get("product_recommendations"):
+            products_text = sections["product_recommendations"]
+            products = self._parse_product_entries(products_text, skin_analysis)
+        
+        # If structured parsing fails, fall back to simple parsing
+        if not products:
+            products = self._extract_products_from_text_simple(
+                content, skin_analysis, user_location, citations
+            )
+        
+        # If all parsing fails, use fallback products
+        if not products:
+            products = self._create_fallback_products(skin_analysis, user_location)
+        
+        return products[:7]  # Return up to 7 products
+    
+    def _parse_response_sections(self, content: str) -> Dict[str, str]:
+        """
+        Parse the response into structured sections based on the prompt template
+        """
+        sections = {}
+        current_section = None
+        current_content = []
+        
+        lines = content.split('\n')
+        
+        for line in lines:
+            # Check for section headers
+            if "**PRIORITY ANALYSIS**" in line:
+                if current_section:
+                    sections[current_section] = '\n'.join(current_content)
+                current_section = "priority_analysis"
+                current_content = []
+            elif "**PRODUCT RECOMMENDATIONS**" in line:
+                if current_section:
+                    sections[current_section] = '\n'.join(current_content)
+                current_section = "product_recommendations"
+                current_content = []
+            elif "**ROUTINE RECOMMENDATIONS**" in line:
+                if current_section:
+                    sections[current_section] = '\n'.join(current_content)
+                current_section = "routine_recommendations"
+                current_content = []
+            elif "**LOCAL AVAILABILITY**" in line:
+                if current_section:
+                    sections[current_section] = '\n'.join(current_content)
+                current_section = "local_availability"
+                current_content = []
+            elif "**BUDGET OPTIMIZATION**" in line:
+                if current_section:
+                    sections[current_section] = '\n'.join(current_content)
+                current_section = "budget_optimization"
+                current_content = []
+            elif current_section:
+                current_content.append(line)
+        
+        # Add the last section
+        if current_section:
+            sections[current_section] = '\n'.join(current_content)
+        
+        return sections
+    
+    def _parse_product_entries(self, products_text: str, skin_analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Parse individual product entries from the recommendations section
+        """
+        products = []
+        
+        # Split by product entries (usually separated by double newlines or numbered)
+        product_blocks = re.split(r'\n\s*\n', products_text)
+        
+        for block in product_blocks:
+            if not block.strip():
+                continue
+            
+            product = self._extract_product_details(block, skin_analysis)
+            if product.get("name"):
+                products.append(product)
+        
+        return products
+    
+    def _extract_product_details(self, block: str, skin_analysis: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract detailed product information from a product block
+        """
+        product = {}
+        
+        # Extract product name and brand
+        name_match = re.search(r'\*\*Product Name & Brand\*\*:?\s*(.+)', block, re.IGNORECASE)
+        if name_match:
+            product['name'] = name_match.group(1).strip()
+            product['brand'] = self._extract_brand(product['name'])
+        
+        # Extract key ingredients
+        ingredients_match = re.search(r'\*\*Key Active Ingredients\*\*:?\s*(.+)', block, re.IGNORECASE)
+        if ingredients_match:
+            ingredients_text = ingredients_match.group(1).strip()
+            product['key_ingredients'] = [ing.strip() for ing in re.split(r'[,;]', ingredients_text)]
+        
+        # Extract price range
+        price_match = re.search(r'\*\*Price Range\*\*:?\s*(.+)', block, re.IGNORECASE)
+        if price_match:
+            product['price_range'] = price_match.group(1).strip()
+        
+        # Extract why it's recommended
+        why_match = re.search(r'\*\*Why It\'s Recommended\*\*:?\s*(.+)', block, re.IGNORECASE)
+        if why_match:
+            product['match_reasoning'] = why_match.group(1).strip()
+        
+        # Extract usage instructions
+        usage_match = re.search(r'\*\*Usage Instructions\*\*:?\s*(.+)', block, re.IGNORECASE)
+        if usage_match:
+            product['usage_instructions'] = usage_match.group(1).strip()
+        
+        # Extract where to buy
+        where_match = re.search(r'\*\*Where to Buy Locally\*\*:?\s*(.+)', block, re.IGNORECASE)
+        if where_match:
+            stores_text = where_match.group(1).strip()
+            product['availability'] = {
+                'local_stores': self._extract_stores_from_text(stores_text, local=True),
+                'online_stores': self._extract_stores_from_text(stores_text, local=False)
+            }
+        
+        # Add metadata
+        if product.get("name"):
+            product['id'] = f"perplexity_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{hash(product['name']) % 10000}"
+            product['category'] = self._guess_category(product['name'])
+            product['compatibility_score'] = self._estimate_compatibility_score(product, skin_analysis)
+            product['source'] = "perplexity_search"
+            product['search_timestamp'] = datetime.now(timezone.utc).isoformat()
+        
+        return product
+    
+    def _extract_stores_from_text(self, text: str, local: bool = True) -> List[str]:
+        """
+        Extract store names from text
+        """
+        stores = []
+        
+        if local:
+            # Local physical stores
+            local_stores = ['CVS', 'Target', 'Walgreens', 'Walmart', 'Ulta', 'Sephora', 'Rite Aid']
+            for store in local_stores:
+                if store.lower() in text.lower():
+                    stores.append(store)
+        else:
+            # Online stores
+            online_keywords = ['amazon', 'sephora.com', 'ulta.com', 'target.com', '.com', 'online']
+            if any(keyword in text.lower() for keyword in online_keywords):
+                if 'amazon' in text.lower():
+                    stores.append('Amazon')
+                if 'sephora' in text.lower():
+                    stores.append('Sephora.com')
+                if 'ulta' in text.lower():
+                    stores.append('Ulta.com')
+                if 'target' in text.lower():
+                    stores.append('Target.com')
+        
+        return list(set(stores))[:3]
+    
+    def _extract_products_from_text_simple(
+        self,
+        content: str,
+        skin_analysis: Dict[str, Any],
+        user_location: Dict[str, str],
+        citations: List[str]
+    ) -> List[Dict[str, Any]]:
+        """
+        Simple fallback parser for less structured responses
+        """
+        products = []
+        
+        # Simple pattern matching to find product mentions
+        lines = content.split('\n')
+        current_product = {}
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Look for product names (usually contain brand names)
+            if any(brand in line.lower() for brand in ['cerave', 'neutrogena', 'olay', 'the ordinary', 'paula', 'la roche', 'cetaphil', 'aveeno']):
+                if current_product:
+                    products.append(self._format_product_recommendation(current_product, skin_analysis))
+                    current_product = {}
+                
+                current_product['raw_text'] = line
+                current_product['name'] = line
+            
+            elif '$' in line:
+                current_product['price_info'] = line
+            
+            elif any(store in line.lower() for store in ['amazon', 'sephora', 'ulta', 'target', 'cvs', 'walgreens']):
+                if 'availability' not in current_product:
+                    current_product['availability'] = []
+                current_product['availability'].append(line)
+        
+        # Add the last product
+        if current_product:
+            products.append(self._format_product_recommendation(current_product, skin_analysis))
+        
+        return products
+    
+    def _format_product_recommendation(
+        self,
+        raw_product: Dict[str, Any],
+        skin_analysis: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Format parsed product into standardized recommendation structure
+        """
+        return {
+            "id": f"perplexity_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{hash(raw_product.get('name', '')) % 10000}",
+            "name": raw_product.get('name', 'Product Name'),
+            "brand": self._extract_brand(raw_product.get('name', '')),
+            "category": self._guess_category(raw_product.get('name', '')),
+            "price_range": self._extract_price_range(raw_product.get('price_info', '$15-25')),
+            "availability": {
+                "local_stores": self._extract_local_stores(raw_product.get('availability', [])),
+                "online_stores": self._extract_online_stores(raw_product.get('availability', []))
+            },
+            "match_reasoning": self._generate_match_reasoning(raw_product, skin_analysis),
+            "compatibility_score": self._estimate_compatibility_score(raw_product, skin_analysis),
+            "usage_instructions": self._generate_usage_instructions(raw_product),
+            "key_ingredients": self._extract_key_ingredients(raw_product),
+            "source": "perplexity_search",
+            "search_timestamp": datetime.now(timezone.utc).isoformat(),
+            "raw_data": raw_product
+        }
+    
+    async def _get_cached_recommendations(
+        self,
+        user: UserModel,
+        skin_analysis: Dict[str, Any],
+        db: Database,
+        limit: int = 3
+    ) -> List[Dict[str, Any]]:
+        """
+        Get cached product recommendations from user's favorites
+        """
+        try:
+            # Find user's successful product interactions
+            cached_products = list(db.user_product_interactions.find({
+                "user_id": user.id,
+                "interaction_type": {"$in": ["liked", "saved", "purchased"]},
+                "created_at": {
+                    "$gte": datetime.now(timezone.utc) - timedelta(hours=self.cache_ttl_hours)
+                }
+            }).sort("created_at", -1).limit(limit))
+            
+            # Filter cached products that match current skin analysis
+            relevant_cached = []
+            for cached in cached_products:
+                if self._is_product_relevant(cached.get("product_data", {}), skin_analysis):
+                    product = cached["product_data"]
+                    product["source"] = "user_favorites"
+                    product["last_interaction"] = cached["created_at"].isoformat()
+                    relevant_cached.append(product)
+            
+            return relevant_cached
+            
+        except Exception as e:
+            logger.error(f"Failed to get cached recommendations: {e}")
+            return []
+    
+    async def _cache_recommendations(
+        self,
+        user_id: ObjectId,
+        recommendations: List[Dict[str, Any]],
+        skin_analysis: Dict[str, Any],
+        db: Database
+    ):
+        """
+        Cache successful recommendations for future use
+        """
+        try:
+            cache_data = {
+                "user_id": user_id,
+                "recommendations": recommendations,
+                "skin_analysis_summary": {
+                    "skin_type": skin_analysis.get("skin_type"),
+                    "concerns": skin_analysis.get("concerns", []),
+                    "scores": skin_analysis.get("scores", {})
+                },
+                "created_at": datetime.now(timezone.utc),
+                "expires_at": datetime.now(timezone.utc) + timedelta(hours=self.cache_ttl_hours)
+            }
+            
+            db.recommendation_cache.insert_one(cache_data)
+            
+            # Clean up old cache entries
+            db.recommendation_cache.delete_many({
+                "user_id": user_id,
+                "expires_at": {"$lt": datetime.now(timezone.utc)}
+            })
+            
+        except Exception as e:
+            logger.error(f"Failed to cache recommendations: {e}")
+    
+    async def track_product_interaction(
+        self,
+        user_id: ObjectId,
+        product_data: Dict[str, Any],
+        interaction_type: str,
+        db: Database,
+        skin_analysis_id: Optional[ObjectId] = None
+    ):
+        """
+        Track user interactions with recommended products for future caching
+        """
+        try:
+            interaction_data = {
+                "user_id": user_id,
+                "product_data": product_data,
+                "interaction_type": interaction_type,  # "viewed", "liked", "saved", "purchased"
+                "skin_analysis_id": skin_analysis_id,
+                "created_at": datetime.now(timezone.utc)
+            }
+            
+            db.user_product_interactions.insert_one(interaction_data)
+            
+            # If this is a positive interaction, boost this product for future recommendations
+            if interaction_type in ["liked", "saved", "purchased"]:
+                await self._boost_product_score(user_id, product_data, db)
+                
+        except Exception as e:
+            logger.error(f"Failed to track product interaction: {e}")
+    
+    def _create_fallback_products(
+        self,
+        skin_analysis: Dict[str, Any],
+        user_location: Dict[str, str]
+    ) -> List[Dict[str, Any]]:
+        """
+        Create fallback recommendations when Perplexity search fails
+        """
+        skin_type = skin_analysis.get("skin_type", "combination")
+        concerns = skin_analysis.get("concerns", ["hydration"])
+        
+        fallback_products = [
+            {
+                "id": "fallback_001",
+                "name": "CeraVe Hydrating Cleanser",
+                "brand": "CeraVe",
+                "category": "cleanser",
+                "price_range": "$12-16",
+                "availability": {
+                    "local_stores": ["CVS", "Target", "Walgreens"],
+                    "online_stores": ["Amazon", "Target.com", "CVS.com"]
+                },
+                "match_reasoning": f"Gentle cleanser perfect for {skin_type} skin, contains ceramides for hydration",
+                "compatibility_score": 8.5,
+                "source": "fallback_database",
+                "key_ingredients": ["Ceramides", "Hyaluronic Acid"],
+                "usage_instructions": "Apply to damp skin, massage gently, rinse with lukewarm water. Use morning and evening."
+            },
+            {
+                "id": "fallback_002", 
+                "name": "The Ordinary Niacinamide 10% + Zinc 1%",
+                "brand": "The Ordinary",
+                "category": "serum",
+                "price_range": "$6-8",
+                "availability": {
+                    "local_stores": ["Ulta"],
+                    "online_stores": ["Amazon", "Ulta.com", "Sephora.com"]
+                },
+                "match_reasoning": f"Addresses pore concerns common in {skin_type} skin, budget-friendly option",
+                "compatibility_score": 8.2,
+                "source": "fallback_database",
+                "key_ingredients": ["Niacinamide", "Zinc"],
+                "usage_instructions": "Apply 2-3 drops to clean skin before moisturizer. Start with evening use."
+            },
+            {
+                "id": "fallback_003",
+                "name": "Neutrogena Hydro Boost Gel-Cream",
+                "brand": "Neutrogena",
+                "category": "moisturizer",
+                "price_range": "$15-20",
+                "availability": {
+                    "local_stores": ["CVS", "Target", "Walmart", "Walgreens"],
+                    "online_stores": ["Amazon", "Target.com", "Walmart.com"]
+                },
+                "match_reasoning": f"Lightweight hydration ideal for {skin_type} skin, non-comedogenic formula",
+                "compatibility_score": 8.0,
+                "source": "fallback_database",
+                "key_ingredients": ["Hyaluronic Acid", "Glycerin"],
+                "usage_instructions": "Apply to clean skin as the last step of your routine. Use morning and evening."
+            },
+            {
+                "id": "fallback_004",
+                "name": "La Roche-Posay Anthelios SPF 60",
+                "brand": "La Roche-Posay",
+                "category": "sunscreen",
+                "price_range": "$20-25",
+                "availability": {
+                    "local_stores": ["CVS", "Walgreens", "Ulta"],
+                    "online_stores": ["Amazon", "CVS.com", "LaRoche-Posay.com"]
+                },
+                "match_reasoning": "Essential daily sun protection, lightweight formula suitable for all skin types",
+                "compatibility_score": 9.0,
+                "source": "fallback_database",
+                "key_ingredients": ["Avobenzone", "Homosalate", "Octisalate"],
+                "usage_instructions": "Apply generously 15 minutes before sun exposure. Reapply every 2 hours."
+            }
+        ]
+        
+        return fallback_products[:3]
+    
+    # Helper methods for parsing and formatting
+    def _extract_brand(self, product_name: str) -> str:
+        """Extract brand name from product text"""
+        common_brands = ['CeraVe', 'Neutrogena', 'Olay', 'The Ordinary', 'Paula\'s Choice', 
+                        'Clinique', 'Cetaphil', 'La Roche-Posay', 'Aveeno', 'Differin']
+        
+        for brand in common_brands:
+            if brand.lower() in product_name.lower():
+                return brand
+        
+        # Try to extract first word as brand
+        words = product_name.split()
+        return words[0] if words else "Unknown Brand"
+    
+    def _guess_category(self, product_name: str) -> str:
+        """Guess product category from name"""
+        name_lower = product_name.lower()
+        
+        if any(word in name_lower for word in ['cleanser', 'wash', 'foam']):
+            return 'cleanser'
+        elif any(word in name_lower for word in ['serum', 'treatment']):
+            return 'serum' 
+        elif any(word in name_lower for word in ['moisturizer', 'cream', 'lotion']):
+            return 'moisturizer'
+        elif any(word in name_lower for word in ['sunscreen', 'spf', 'sun']):
+            return 'sunscreen'
+        elif any(word in name_lower for word in ['toner', 'essence']):
+            return 'toner'
+        else:
+            return 'treatment'
+    
+    def _extract_price_range(self, price_text: str) -> str:
+        """Extract price range from text"""
+        if '$' in price_text:
+            return price_text
+        return "$15-30"  # Default range
+    
+    def _extract_local_stores(self, availability: List[str]) -> List[str]:
+        """Extract local store information"""
+        local_stores = []
+        store_names = ['CVS', 'Target', 'Walgreens', 'Walmart', 'Ulta', 'Sephora']
+        
+        for line in availability:
+            for store in store_names:
+                if store.lower() in line.lower() and 'online' not in line.lower():
+                    local_stores.append(store)
+        
+        return list(set(local_stores))[:3]  # Unique stores, max 3
+    
+    def _extract_online_stores(self, availability: List[str]) -> List[str]:
+        """Extract online store information"""
+        online_stores = []
+        online_keywords = ['amazon', '.com', 'online', 'website']
+        
+        for line in availability:
+            if any(keyword in line.lower() for keyword in online_keywords):
+                if 'amazon' in line.lower():
+                    online_stores.append('Amazon')
+                elif 'sephora' in line.lower():
+                    online_stores.append('Sephora.com')
+                elif 'ulta' in line.lower():
+                    online_stores.append('Ulta.com')
+                elif 'target' in line.lower():
+                    online_stores.append('Target.com')
+        
+        return list(set(online_stores))[:3]  # Unique stores, max 3
+    
+    def _generate_match_reasoning(self, product: Dict[str, Any], skin_analysis: Dict[str, Any]) -> str:
+        """Generate why this product matches the user's skin analysis"""
+        skin_type = skin_analysis.get("skin_type", "your skin type")
+        concerns = skin_analysis.get("concerns", [])
+        
+        if concerns:
+            return f"Great for {skin_type} skin, specifically targets {concerns[0]} concerns"
+        else:
+            return f"Perfect daily essential for {skin_type} skin"
+    
+    def _estimate_compatibility_score(self, product: Dict[str, Any], skin_analysis: Dict[str, Any]) -> float:
+        """Estimate compatibility score based on analysis"""
+        base_score = 7.5
+        
+        # Boost score if product seems to match concerns
+        concerns = skin_analysis.get("concerns", [])
+        product_text = str(product.get("name", "")).lower() + str(product.get("raw_text", "")).lower()
+        
+        for concern in concerns:
+            if concern.lower() in product_text:
+                base_score += 0.5
+        
+        return min(10.0, base_score)
+    
+    def _generate_usage_instructions(self, product: Dict[str, Any]) -> str:
+        """Generate basic usage instructions"""
+        category = self._guess_category(product.get('name', ''))
+        
+        instructions = {
+            "cleanser": "Apply to damp skin, massage gently, rinse with lukewarm water. Use morning and evening.",
+            "serum": "Apply 2-3 drops to clean skin before moisturizer. Start with evening use.",
+            "moisturizer": "Apply to clean skin as the last step of your routine. Use morning and evening.", 
+            "sunscreen": "Apply generously 15 minutes before sun exposure. Reapply every 2 hours.",
+            "toner": "Apply to clean skin with cotton pad or gentle patting motions.",
+            "treatment": "Follow package instructions for best results."
+        }
+        
+        return instructions.get(category, "Follow package instructions for best results.")
+    
+    def _extract_key_ingredients(self, product: Dict[str, Any]) -> List[str]:
+        """Extract key ingredients from product text"""
+        # This would be more sophisticated in production
+        common_ingredients = ['niacinamide', 'hyaluronic acid', 'ceramides', 'retinol', 
+                            'vitamin c', 'salicylic acid', 'glycolic acid', 'peptides']
+        
+        product_text = str(product.get("name", "")).lower() + str(product.get("raw_text", "")).lower()
+        found_ingredients = [ing.title() for ing in common_ingredients if ing in product_text]
+        
+        return found_ingredients[:3] if found_ingredients else ["See product details"]
+    
+    def _is_product_relevant(self, product: Dict[str, Any], skin_analysis: Dict[str, Any]) -> bool:
+        """Check if cached product is still relevant to current skin analysis"""
+        # Simple relevance check - in production, this would be more sophisticated
+        return True  # For now, assume all cached products are relevant
+    
+    async def _boost_product_score(self, user_id: Any, product_data: Dict[str, Any], db: Database):
+        """Boost product score for future recommendations"""
+        # This is a placeholder - implement scoring logic as needed
+        pass
+    
+    def _build_routine_from_products(self, products: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Build AM/PM routine suggestions from recommended products"""
+        routine = {"morning": [], "evening": []}
+        
+        # Sort products by typical routine order
+        order = {"cleanser": 1, "toner": 2, "serum": 3, "moisturizer": 4, "sunscreen": 5}
+        
+        for product in products:
+            category = product.get("category", "treatment")
+            step = {
+                "product": product["name"],
+                "category": category,
+                "step_order": order.get(category, 6),
+                "instructions": product.get("usage_instructions", "")
+            }
+            
+            if category == "sunscreen":
+                routine["morning"].append(step)
+            elif category in ["cleanser", "moisturizer"]:
+                routine["morning"].append(step)
+                routine["evening"].append(step)
+            else:
+                # Serums and treatments primarily in evening
+                routine["evening"].append(step)
+        
+        # Sort by step order
+        routine["morning"].sort(key=lambda x: x["step_order"])
+        routine["evening"].sort(key=lambda x: x["step_order"])
+        
+        return routine
+    
+    def _generate_shopping_list(self, products: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Generate prioritized shopping list with cost estimates"""
+        essential_categories = ["cleanser", "moisturizer", "sunscreen"]
+        treatment_categories = ["serum", "treatment", "toner"]
+        
+        shopping_list = {
+            "immediate_priorities": [],
+            "next_additions": [],
+            "total_estimated_cost": "$0-0"
+        }
+        
+        total_min = 0
+        total_max = 0
+        
+        for product in products:
+            category = product.get("category", "")
+            price_range = product.get("price_range", "$15-25")
+            
+            # Extract price numbers
+            prices = re.findall(r'\$(\d+)', price_range)
+            if len(prices) >= 2:
+                min_price, max_price = int(prices[0]), int(prices[1])
+            elif len(prices) == 1:
+                min_price = max_price = int(prices[0])
+            else:
+                min_price, max_price = 15, 25
+            
+            total_min += min_price
+            total_max += max_price
+            
+            item = {
+                "product": product["name"],
+                "category": category,
+                "price_range": price_range,
+                "where_to_buy": product.get("availability", {}).get("online_stores", []),
+                "priority_reason": f"Essential {category}" if category in essential_categories else f"Targets specific concerns"
+            }
+            
+            if category in essential_categories:
+                shopping_list["immediate_priorities"].append(item)
+            else:
+                shopping_list["next_additions"].append(item)
+        
+        shopping_list["total_estimated_cost"] = f"${total_min}-{total_max}"
+        
+        return shopping_list
+    
+    async def _get_fallback_recommendations(
+        self, 
+        user: UserModel, 
+        skin_analysis: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Fallback recommendations when all systems fail"""
+        fallback_products = self._create_fallback_products(skin_analysis, {"city": "Any City", "state": "Any State"})
+        
+        return {
+            "recommendations": fallback_products,
+            "routine_suggestions": self._build_routine_from_products(fallback_products),
+            "shopping_list": self._generate_shopping_list(fallback_products),
+            "source_mix": {"fallback": len(fallback_products)},
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "note": "Using fallback recommendations due to service unavailability"
+        }
+
+    def _determine_required_ingredients(self, metrics: Dict[str, Any], skin_analysis: Dict[str, Any]) -> List[str]:
+        """
+        Determine required ingredients based on skin scores and concerns
+        """
+        ingredients = []
+        concerns = skin_analysis.get("concerns", [])
+        
+        # Hydration concerns (score below 70 needs attention)
+        if metrics.get("hydration", 100) < 70 or "dryness" in concerns:
+            ingredients.extend(["Hyaluronic Acid", "Ceramides", "Glycerin", "Squalane"])
+        
+        # Texture and anti-aging (smoothness and fine lines)
+        if metrics.get("smoothness", 100) < 70 or metrics.get("fine_lines_wrinkles", 100) < 70:
+            ingredients.extend(["Retinol", "Peptides", "Niacinamide", "Vitamin C"])
+        
+        # Pigmentation and dark spots (score below 70 needs attention)
+        if metrics.get("dark_spots", 100) < 70 or "hyperpigmentation" in concerns:
+            ingredients.extend(["Vitamin C", "Kojic Acid", "Alpha Arbutin", "Tranexamic Acid"])
+        
+        # Acne and clarity (score below 70 needs attention)
+        if metrics.get("acne", 100) < 70 or "acne" in concerns:
+            ingredients.extend(["Salicylic Acid", "Benzoyl Peroxide", "Niacinamide", "Tea Tree Oil"])
+        
+        # Redness and sensitivity (score below 70 needs attention)
+        if metrics.get("redness", 100) < 70 or "sensitivity" in concerns:
+            ingredients.extend(["Centella Asiatica", "Allantoin", "Oat Extract", "Ceramides"])
+        
+        # Dark circles (score below 70 needs attention)
+        if metrics.get("dark_circles", 100) < 70:
+            ingredients.extend(["Caffeine", "Vitamin K", "Retinol", "Peptides"])
+        
+        # Remove duplicates and return top ingredients
+        unique_ingredients = list(dict.fromkeys(ingredients))
+        return unique_ingredients[:8]  # Return top 8 ingredients
+    
+    def _format_age_range(self, age_range: str) -> str:
+        """
+        Format age range from database format to human-readable format
+        """
+        age_mapping = {
+            "under_18": "Under 18",
+            "18_24": "18-24",
+            "25_34": "25-34", 
+            "35_44": "35-44",
+            "45_54": "45-54",
+            "55_plus": "55+"
+        }
+        return age_mapping.get(age_range, "25-34")
+    
+    def _determine_climate(self, state: str) -> str:
+        """
+        Determine climate based on state
+        """
+        # Simplified climate mapping - in production, use more sophisticated data
+        tropical_states = ["FL", "HI", "PR", "VI", "GU"]
+        dry_states = ["AZ", "NV", "NM", "UT", "CO"]
+        cold_states = ["AK", "ME", "VT", "NH", "MN", "WI", "MI", "ND", "SD", "MT"]
+        humid_states = ["LA", "MS", "AL", "GA", "SC", "NC", "TN", "AR"]
+        
+        state_abbr = state.upper()[:2]
+        
+        if state_abbr in tropical_states:
+            return "Tropical/Hot and Humid"
+        elif state_abbr in dry_states:
+            return "Dry/Arid"
+        elif state_abbr in cold_states:
+            return "Cold/Continental"
+        elif state_abbr in humid_states:
+            return "Humid Subtropical"
+        else:
+            return "Temperate"
+    
+    def _get_current_season(self) -> str:
+        """
+        Get current season based on date
+        """
+        month = datetime.now(timezone.utc).month
+        
+        if month in [12, 1, 2]:
+            return "Winter"
+        elif month in [3, 4, 5]:
+            return "Spring"
+        elif month in [6, 7, 8]:
+            return "Summer"
+        else:
+            return "Fall"
+
+# Global service instance
+perplexity_service = PerplexityRecommendationService()

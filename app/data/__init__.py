@@ -1,0 +1,1 @@
+# Data directory for seed data and templates

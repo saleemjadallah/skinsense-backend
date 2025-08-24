@@ -1,0 +1,117 @@
+groups:
+  - name: skinsense_alerts
+    interval: 30s
+    rules:
+      # API Performance Alerts
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, sum(rate(fastapi_http_request_duration_seconds_bucket[5m])) by (le, handler)) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High response time on {{ $labels.handler }}"
+          description: "95th percentile response time is {{ $value }}s (threshold: 2s)"
+
+      - alert: HighErrorRate
+        expr: (sum(rate(http_errors_total[5m])) / sum(rate(fastapi_requests_total[5m]))) * 100 > 5
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }}% (threshold: 5%)"
+
+      # AI Service Alerts
+      - alert: AIServiceDown
+        expr: up{job="skinsense-backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SkinSense Backend is down"
+          description: "The backend service has been down for more than 2 minutes"
+
+      - alert: AIServiceHighLatency
+        expr: histogram_quantile(0.95, sum(rate(ai_service_duration_seconds_bucket[5m])) by (le, service)) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High latency for {{ $labels.service }} AI service"
+          description: "95th percentile latency is {{ $value }}s (threshold: 10s)"
+
+      - alert: AIServiceErrors
+        expr: rate(ai_service_requests_total{status="error"}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} AI service experiencing errors"
+          description: "Error rate: {{ $value }} errors/second"
+
+      # Resource Alerts
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on server"
+          description: "Memory usage is {{ $value }}% (threshold: 85%)"
+
+      - alert: HighCPUUsage
+        expr: 100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on server"
+          description: "CPU usage is {{ $value }}% (threshold: 80%)"
+
+      # Database Alerts
+      - alert: MongoDBConnectionsHigh
+        expr: mongodb_connections_current > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High number of MongoDB connections"
+          description: "Current connections: {{ $value }} (threshold: 100)"
+
+      - alert: MongoDBSlowQueries
+        expr: rate(mongodb_operation_duration_seconds_sum[5m]) / rate(mongodb_operation_duration_seconds_count[5m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MongoDB queries are slow"
+          description: "Average query time: {{ $value }}s (threshold: 1s)"
+
+      # Business Metrics Alerts
+      - alert: LowAnalysisRate
+        expr: sum(rate(skin_analysis_total[1h])) * 3600 < 10
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "Low skin analysis rate"
+          description: "Only {{ $value }} analyses in the last hour (expected: >10)"
+
+      - alert: NoNewUsers
+        expr: sum(rate(skin_analysis_total{user_type="new"}[24h])) * 86400 < 1
+        for: 24h
+        labels:
+          severity: info
+        annotations:
+          summary: "No new users in 24 hours"
+          description: "No new users have performed skin analysis in the last 24 hours"
+
+      # Cost Alerts
+      - alert: HighAPISpend
+        expr: sum(rate(api_revenue_cents[1h])) * 3600 > 1000
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "High API spending detected"
+          description: "Estimated spend: ${{ $value / 100 }}/hour (threshold: $10/hour)"

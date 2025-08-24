@@ -1,0 +1,34 @@
+# Add this method to the SmartReminderService class
+
+    def get_today_reminders(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get today's reminders for a user (without generating new ones)"""
+        try:
+            logger.info(f"[REMINDER SERVICE] Getting today's reminders for user: {user_id}")
+            
+            # Get today's date range
+            today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+            tomorrow = today + timedelta(days=1)
+            
+            # Find reminders for today
+            query = {
+                "user_id": user_id,
+                "scheduled_for": {
+                    "$gte": today,
+                    "$lt": tomorrow
+                },
+                "status": {"$in": ["pending", "snoozed"]}
+            }
+            
+            existing = list(self.reminders_collection.find(query))
+            
+            # Convert ObjectId to string for JSON serialization
+            for reminder in existing:
+                reminder["id"] = str(reminder["_id"])
+                del reminder["_id"]
+            
+            logger.info(f"[REMINDER SERVICE] Found {len(existing)} reminders for today")
+            return existing
+            
+        except Exception as e:
+            logger.error(f"[REMINDER SERVICE] Error getting today's reminders: {e}")
+            return []

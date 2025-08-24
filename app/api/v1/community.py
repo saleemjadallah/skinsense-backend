@@ -1,0 +1,683 @@
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from pymongo.database import Database
+from typing import List, Optional, Any
+from datetime import datetime, timedelta
+from bson import ObjectId
+import logging
+
+from app.database import get_database
+from app.api.deps import get_current_active_user
+from app.models.user import UserModel
+from app.models.community import CommunityPost, Comment, PostInteraction
+from app.schemas.community import (
+    PostCreate, PostUpdate, PostResponse, PostListResponse,
+    CommentCreate, CommentUpdate, CommentResponse,
+    LikeResponse, SaveResponse, PostStats, UserProfile
+)
+from app.services.s3_service import s3_service
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+
+def get_user_profile(user_id: Any, db: Database, is_anonymous: bool = False) -> UserProfile:
+    """Get user profile info for posts/comments"""
+    if is_anonymous:
+        return UserProfile(
+            id="anonymous",
+            username="Anonymous User",
+            profile_image=None,
+            is_expert=False,
+            expert_title=None,
+            is_anonymous=True
+        )
+    
+    user = db.users.find_one({"_id": user_id})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Check if user is an expert
+    expert = db.expert_profiles.find_one({"user_id": user_id})
+    
+    return UserProfile(
+        id=str(user_id),
+        username=user.get("username", "Anonymous"),
+        profile_image=user.get("profile_image"),
+        is_expert=expert is not None,
+        expert_title=expert.get("title") if expert else None,
+        is_anonymous=False
+    )
+
+
+def get_post_interactions(post_id: Any, user_id: Any, db: Database) -> dict:
+    """Get user's interactions with a post"""
+    post = db.community_posts.find_one({"_id": post_id})
+    if not post:
+        return {"is_liked": False, "is_saved": False}
+    
+    return {
+        "is_liked": user_id in post.get("likes", []),
+        "is_saved": user_id in post.get("saves", [])
+    }
+
+
+@router.post("/posts", response_model=PostResponse)
+async def create_post(
+    post_data: PostCreate,
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Database = Depends(get_database)
+):
+    """Create a new community post"""
+    try:
+        # Create post document
+        post = CommunityPost(
+            user_id=current_user.id,
+            content=post_data.content,
+            image_url=post_data.image_url,
+            tags=post_data.tags,
+            post_type=post_data.post_type,
+            is_anonymous=post_data.is_anonymous
+        )
+        
+        # Insert into database
+        result = db.community_posts.insert_one(post.model_dump(by_alias=True))
+        post.id = result.inserted_id
+        
+        # Get user profile (handle anonymous)
+        user_profile = get_user_profile(current_user.id, db, is_anonymous=post.is_anonymous)
+        
+        # Return response
+        return PostResponse(
+            id=str(post.id),
+            user=user_profile,
+            content=post.content,
+            image_url=post.image_url,
+            tags=post.tags,
+            post_type=post.post_type,
+            created_at=post.created_at,
+            likes_count=0,
+            comments_count=0,
+            saves_count=0,
+            is_liked=False,
+            is_saved=False
+        )
+        
+    except Exception as e:
+        logger.error(f"Error creating post: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create post")
+
+
+@router.get("/posts", response_model=PostListResponse)
+async def get_posts(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=50),
+    post_type: Optional[str] = None,
+    tag: Optional[str] = None,
+    trending: bool = False,
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Database = Depends(get_database)
+):
+    """Get community posts with filters"""
+    try:
+        # Build query
+        query = {"is_active": True}
+        if post_type:
+            query["post_type"] = post_type
+        if tag:
+            query["tags"] = tag
+        
+        # Sort order
+        if trending:
+            # Sort by engagement (likes + comments) and recency
+            sort = [("likes_count", -1), ("comments_count", -1), ("created_at", -1)]
+        else:
+            sort = [("created_at", -1)]
+        
+        # Get posts (convert cursor to list)
+        posts = list(db.community_posts.find(query).sort(sort).skip(skip).limit(limit))
+        total = db.community_posts.count_documents(query)
+        
+        # Transform posts
+        post_responses = []
+        for post in posts:
+            # Get user profile (handle anonymous)
+            user_profile = get_user_profile(post["user_id"], db, is_anonymous=post.get("is_anonymous", False))
+            
+            # Get interactions
+            interactions = get_post_interactions(post["_id"], current_user.id, db)
+            
+            # Get top 2 comments
+            top_comments = []
+            comments = list(db.comments.find(
+                {"post_id": post["_id"], "is_active": True}
+            ).sort([("likes", -1), ("created_at", -1)]).limit(2))
+            
+            for comment in comments:
+                comment_user = get_user_profile(comment["user_id"], db)
+                top_comments.append(CommentResponse(
+                    id=str(comment["_id"]),
+                    post_id=str(post["_id"]),
+                    user=comment_user,
+                    content=comment["content"],
+                    likes_count=len(comment.get("likes", [])),
+                    is_liked=current_user.id in comment.get("likes", []),
+                    created_at=comment["created_at"],
+                    updated_at=comment.get("updated_at"),
+                    is_edited=comment.get("is_edited", False)
+                ))
+            
+            post_responses.append(PostResponse(
+                id=str(post["_id"]),
+                user=user_profile,
+                content=post["content"],
+                image_url=post.get("image_url"),
+                tags=post.get("tags", []),
+                post_type=post["post_type"],
+                likes_count=len(post.get("likes", [])),
+                comments_count=post.get("comments_count", 0),
+                saves_count=len(post.get("saves", [])),
+                is_liked=interactions["is_liked"],
+                is_saved=interactions["is_saved"],
+                created_at=post["created_at"],
+                updated_at=post.get("updated_at"),
+                is_edited=post.get("is_edited", False),
+                top_comments=top_comments
+            ))
+        
+        return PostListResponse(
+            posts=post_responses,
+            total=total,
+            skip=skip,
+            limit=limit,
+            has_more=(skip + limit) < total
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting posts: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get posts")
+
+
+@router.get("/posts/{post_id}", response_model=PostResponse)
+async def get_post(
+    post_id: str,
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Database = Depends(get_database)
+):
+    """Get a single post by ID"""
+    try:
+        post = db.community_posts.find_one({"_id": ObjectId(post_id), "is_active": True})
+        if not post:
+            raise HTTPException(status_code=404, detail="Post not found")
+        
+        # Get user profile
+        user_profile = get_user_profile(post["user_id"], db)
+        
+        # Get interactions
+        interactions = get_post_interactions(post["_id"], current_user.id, db)
+        
+        # Get top comments
+        top_comments = []
+        comments = list(db.comments.find(
+            {"post_id": post["_id"], "is_active": True}
+        ).sort([("likes", -1), ("created_at", -1)]).limit(3))
+        
+        for comment in comments:
+            comment_user = get_user_profile(comment["user_id"], db)
+            top_comments.append(CommentResponse(
+                id=str(comment["_id"]),
+                post_id=str(post["_id"]),
+                user=comment_user,
+                content=comment["content"],
+                likes_count=len(comment.get("likes", [])),
+                is_liked=current_user.id in comment.get("likes", []),
+                created_at=comment["created_at"],
+                updated_at=comment.get("updated_at"),
+                is_edited=comment.get("is_edited", False)
+            ))
+        
+        return PostResponse(
+            id=str(post["_id"]),
+            user=user_profile,
+            content=post["content"],
+            image_url=post.get("image_url"),
+            tags=post.get("tags", []),
+            post_type=post["post_type"],
+            likes_count=len(post.get("likes", [])),
+            comments_count=post.get("comments_count", 0),
+            saves_count=len(post.get("saves", [])),
+            is_liked=interactions["is_liked"],
+            is_saved=interactions["is_saved"],
+            created_at=post["created_at"],
+            updated_at=post.get("updated_at"),
+            is_edited=post.get("is_edited", False),
+            top_comments=top_comments
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting post: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get post")
+
+
+@router.put("/posts/{post_id}", response_model=PostResponse)
+async def update_post(
+    post_id: str,
+    update_data: PostUpdate,
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Database = Depends(get_database)
+):
+    """Update a post (only by creator)"""
+    try:
+        # Get post
+        post = db.community_posts.find_one({"_id": ObjectId(post_id)})
+        if not post:
+            raise HTTPException(status_code=404, detail="Post not found")
+        
+        # Check ownership
+        if post["user_id"] != current_user.id:
+            raise HTTPException(status_code=403, detail="Not authorized to update this post")
+        
+        # Update fields
+        update_dict = {}
+        if update_data.content is not None:
+            update_dict["content"] = update_data.content
+        if update_data.tags is not None:
+            update_dict["tags"] = update_data.tags
+        
+        if update_dict:
+            update_dict["updated_at"] = datetime.utcnow()
+            update_dict["is_edited"] = True
+            
+            db.community_posts.update_one(
+                {"_id": ObjectId(post_id)},
+                {"$set": update_dict}
+            )
+        
+        # Return updated post
+        return get_post(post_id, current_user, db)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating post: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update post")
+
+
+@router.delete("/posts/{post_id}")
+async def delete_post(
+    post_id: str,
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Database = Depends(get_database)
+):
+    """Delete a post (soft delete)"""
+    try:
+        # Get post
+        post = db.community_posts.find_one({"_id": ObjectId(post_id)})
+        if not post:
+            raise HTTPException(status_code=404, detail="Post not found")
+        
+        # Check ownership
+        if post["user_id"] != current_user.id:
+            raise HTTPException(status_code=403, detail="Not authorized to delete this post")
+        
+        # Soft delete
+        db.community_posts.update_one(
+            {"_id": ObjectId(post_id)},
+            {"$set": {"is_active": False, "updated_at": datetime.utcnow()}}
+        )
+        
+        return {"message": "Post deleted successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting post: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete post")
+
+
+@router.post("/posts/{post_id}/like", response_model=LikeResponse)
+async def toggle_like_post(
+    post_id: str,
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Database = Depends(get_database)
+):
+    """Like or unlike a post"""
+    try:
+        post = db.community_posts.find_one({"_id": ObjectId(post_id), "is_active": True})
+        if not post:
+            raise HTTPException(status_code=404, detail="Post not found")
+        
+        likes = post.get("likes", [])
+        
+        if current_user.id in likes:
+            # Unlike
+            likes.remove(current_user.id)
+            is_liked = False
+        else:
+            # Like
+            likes.append(current_user.id)
+            is_liked = True
+            
+            # Track interaction
+            db.post_interactions.insert_one({
+                "user_id": current_user.id,
+                "post_id": ObjectId(post_id),
+                "interaction_type": "like",
+                "created_at": datetime.utcnow()
+            })
+        
+        # Update post
+        db.community_posts.update_one(
+            {"_id": ObjectId(post_id)},
+            {"$set": {"likes": likes}}
+        )
+        
+        return LikeResponse(
+            success=True,
+            likes_count=len(likes),
+            is_liked=is_liked
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error toggling like: {e}")
+        raise HTTPException(status_code=500, detail="Failed to toggle like")
+
+
+@router.post("/posts/{post_id}/save", response_model=SaveResponse)
+async def toggle_save_post(
+    post_id: str,
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Database = Depends(get_database)
+):
+    """Save or unsave a post"""
+    try:
+        post = db.community_posts.find_one({"_id": ObjectId(post_id), "is_active": True})
+        if not post:
+            raise HTTPException(status_code=404, detail="Post not found")
+        
+        saves = post.get("saves", [])
+        
+        if current_user.id in saves:
+            # Unsave
+            saves.remove(current_user.id)
+            is_saved = False
+        else:
+            # Save
+            saves.append(current_user.id)
+            is_saved = True
+            
+            # Track interaction
+            db.post_interactions.insert_one({
+                "user_id": current_user.id,
+                "post_id": ObjectId(post_id),
+                "interaction_type": "save",
+                "created_at": datetime.utcnow()
+            })
+        
+        # Update post
+        db.community_posts.update_one(
+            {"_id": ObjectId(post_id)},
+            {"$set": {"saves": saves}}
+        )
+        
+        return SaveResponse(
+            success=True,
+            saves_count=len(saves),
+            is_saved=is_saved
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error toggling save: {e}")
+        raise HTTPException(status_code=500, detail="Failed to toggle save")
+
+
+@router.post("/posts/{post_id}/comments", response_model=CommentResponse)
+async def create_comment(
+    post_id: str,
+    comment_data: CommentCreate,
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Database = Depends(get_database)
+):
+    """Create a comment on a post"""
+    try:
+        # Verify post exists
+        post = db.community_posts.find_one({"_id": ObjectId(post_id), "is_active": True})
+        if not post:
+            raise HTTPException(status_code=404, detail="Post not found")
+        
+        # Create comment
+        comment = Comment(
+            post_id=ObjectId(post_id),
+            user_id=current_user.id,
+            content=comment_data.content,
+            parent_comment_id=ObjectId(comment_data.parent_comment_id) if comment_data.parent_comment_id else None
+        )
+        
+        # Insert comment
+        result = db.comments.insert_one(comment.model_dump(by_alias=True))
+        comment.id = result.inserted_id
+        
+        # Update post comment count
+        db.community_posts.update_one(
+            {"_id": ObjectId(post_id)},
+            {"$inc": {"comments_count": 1}}
+        )
+        
+        # If reply, update parent comment's reply count
+        if comment.parent_comment_id:
+            db.comments.update_one(
+                {"_id": comment.parent_comment_id},
+                {"$inc": {"replies_count": 1}}
+            )
+        
+        # Get user profile
+        user_profile = get_user_profile(current_user.id, db)
+        
+        return CommentResponse(
+            id=str(comment.id),
+            post_id=post_id,
+            user=user_profile,
+            content=comment.content,
+            parent_comment_id=comment_data.parent_comment_id,
+            likes_count=0,
+            is_liked=False,
+            created_at=comment.created_at
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating comment: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create comment")
+
+
+@router.get("/posts/{post_id}/comments", response_model=List[CommentResponse])
+async def get_comments(
+    post_id: str,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=50),
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Database = Depends(get_database)
+):
+    """Get comments for a post"""
+    try:
+        # Get top-level comments (no parent)
+        comments = list(db.comments.find(
+            {"post_id": ObjectId(post_id), "parent_comment_id": None, "is_active": True}
+        ).sort("created_at", -1).skip(skip).limit(limit))
+        
+        comment_responses = []
+        for comment in comments:
+            # Get user profile
+            user_profile = get_user_profile(comment["user_id"], db)
+            
+            # Get replies count
+            replies_count = db.comments.count_documents({
+                "parent_comment_id": comment["_id"],
+                "is_active": True
+            })
+            
+            comment_responses.append(CommentResponse(
+                id=str(comment["_id"]),
+                post_id=post_id,
+                user=user_profile,
+                content=comment["content"],
+                replies_count=replies_count,
+                likes_count=len(comment.get("likes", [])),
+                is_liked=current_user.id in comment.get("likes", []),
+                created_at=comment["created_at"],
+                updated_at=comment.get("updated_at"),
+                is_edited=comment.get("is_edited", False)
+            ))
+        
+        return comment_responses
+        
+    except Exception as e:
+        logger.error(f"Error getting comments: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get comments")
+
+
+@router.post("/comments/{comment_id}/like", response_model=LikeResponse)
+async def toggle_like_comment(
+    comment_id: str,
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Database = Depends(get_database)
+):
+    """Like or unlike a comment"""
+    try:
+        comment = db.comments.find_one({"_id": ObjectId(comment_id), "is_active": True})
+        if not comment:
+            raise HTTPException(status_code=404, detail="Comment not found")
+        
+        likes = comment.get("likes", [])
+        
+        if current_user.id in likes:
+            # Unlike
+            likes.remove(current_user.id)
+            is_liked = False
+        else:
+            # Like
+            likes.append(current_user.id)
+            is_liked = True
+        
+        # Update comment
+        db.comments.update_one(
+            {"_id": ObjectId(comment_id)},
+            {"$set": {"likes": likes}}
+        )
+        
+        return LikeResponse(
+            success=True,
+            likes_count=len(likes),
+            is_liked=is_liked
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error toggling comment like: {e}")
+        raise HTTPException(status_code=500, detail="Failed to toggle like")
+
+
+@router.get("/stats", response_model=PostStats)
+async def get_community_stats(
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Database = Depends(get_database)
+):
+    """Get community statistics"""
+    try:
+        # Total posts
+        total_posts = db.community_posts.count_documents({"is_active": True})
+        
+        # Posts today
+        today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        posts_today = db.community_posts.count_documents({
+            "is_active": True,
+            "created_at": {"$gte": today}
+        })
+        
+        # Trending tags (top 5)
+        pipeline = [
+            {"$match": {"is_active": True}},
+            {"$unwind": "$tags"},
+            {"$group": {"_id": "$tags", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+            {"$limit": 5},
+            {"$project": {"tag": "$_id", "count": 1, "_id": 0}}
+        ]
+        trending_tags = list(db.community_posts.aggregate(pipeline))
+        
+        # Active users (posted in last 24 hours)
+        yesterday = datetime.utcnow() - timedelta(days=1)
+        active_users_pipeline = [
+            {"$match": {"is_active": True, "created_at": {"$gte": yesterday}}},
+            {"$group": {"_id": "$user_id"}},
+            {"$count": "count"}
+        ]
+        active_users_result = list(db.community_posts.aggregate(active_users_pipeline))
+        active_users = active_users_result[0]["count"] if active_users_result else 0
+        
+        return PostStats(
+            total_posts=total_posts,
+            posts_today=posts_today,
+            trending_tags=trending_tags,
+            active_users=active_users
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting community stats: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get statistics")
+
+
+@router.get("/saved", response_model=PostListResponse)
+async def get_saved_posts(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=50),
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Database = Depends(get_database)
+):
+    """Get user's saved posts"""
+    try:
+        # Find posts where user is in saves array
+        query = {"is_active": True, "saves": current_user.id}
+        posts = list(db.community_posts.find(query).sort("created_at", -1).skip(skip).limit(limit))
+        total = db.community_posts.count_documents(query)
+        
+        # Transform posts (similar to get_posts)
+        post_responses = []
+        for post in posts:
+            user_profile = get_user_profile(post["user_id"], db)
+            interactions = get_post_interactions(post["_id"], current_user.id, db)
+            
+            post_responses.append(PostResponse(
+                id=str(post["_id"]),
+                user=user_profile,
+                content=post["content"],
+                image_url=post.get("image_url"),
+                tags=post.get("tags", []),
+                post_type=post["post_type"],
+                likes_count=len(post.get("likes", [])),
+                comments_count=post.get("comments_count", 0),
+                saves_count=len(post.get("saves", [])),
+                is_liked=interactions["is_liked"],
+                is_saved=True,  # Always true for saved posts
+                created_at=post["created_at"],
+                updated_at=post.get("updated_at"),
+                is_edited=post.get("is_edited", False)
+            ))
+        
+        return PostListResponse(
+            posts=post_responses,
+            total=total,
+            skip=skip,
+            limit=limit,
+            has_more=(skip + limit) < total
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting saved posts: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get saved posts")
