@@ -87,14 +87,15 @@ async def get_goals(
     try:
         logger.info(f"Getting goals for user {current_user.id} with status={status_filter}, limit={limit}, skip={skip}")
         goal_service = GoalService()
-        goals = goal_service.get_user_goals(
+        goals_response = goal_service.get_user_goals(
             str(current_user.id),
             status=status_filter,
             limit=limit,
             skip=skip
         )
-        logger.info(f"Found {len(goals.get('goals', []))} goals for user {current_user.id}")
-        return goals
+        # goals_response is a GoalListResponse object, not a dict
+        logger.info(f"Found {len(goals_response.goals)} goals for user {current_user.id}")
+        return goals_response
     except Exception as e:
         logger.error(f"Error getting goals for user {current_user.id}: {str(e)}", exc_info=True)
         raise HTTPException(
