@@ -24,6 +24,14 @@ from app.services.weather_service import WeatherService
 
 router = APIRouter()
 
+def get_user_id(current_user) -> str:
+    """Extract user ID from current_user object"""
+    if hasattr(current_user, 'dict'):
+        user_dict = current_user.dict()
+    else:
+        user_dict = current_user
+    return str(user_dict.get('id', user_dict.get('_id')))
+
 def get_reminder_service():
     """Get reminder service instance"""
     import logging
@@ -165,10 +173,12 @@ async def generate_reminders(
     Trigger generation of new smart reminders
     """
     
+    user_id = get_user_id(current_user)
+    
     # Generate reminders with provided context
     reminder_service = get_reminder_service()
     reminders = reminder_service.generate_personalized_reminders(
-        current_user["_id"],
+        user_id,
         request.context or {},
         include_calendar_sync=request.include_calendar_sync
     )
@@ -189,6 +199,8 @@ async def bulk_generate_reminders(
     Generate reminders for multiple days ahead
     """
     
+    user_id = get_user_id(current_user)
+    
     all_reminders = []
     
     # Generate reminders for each day
@@ -202,7 +214,7 @@ async def bulk_generate_reminders(
         
         reminder_service = get_reminder_service()
         reminders = reminder_service.generate_personalized_reminders(
-            current_user["_id"],
+            user_id,
             context,
             include_calendar_sync=request.include_calendar_sync
         )
@@ -227,9 +239,11 @@ async def get_upcoming_reminders(
     Get upcoming reminders for the user
     """
     
+    user_id = get_user_id(current_user)
+    
     reminder_service = get_reminder_service()
     reminders = reminder_service.get_upcoming_reminders(
-        current_user["_id"],
+        user_id,
         limit=limit,
         min_priority=min_priority
     )
@@ -267,7 +281,7 @@ async def track_reminder_interaction(
     reminder_service = get_reminder_service()
     success = reminder_service.track_interaction(
         reminder_id,
-        current_user["_id"],
+        get_user_id(current_user),
         request.action,
         request.engagement_score or 0.5
     )
@@ -287,7 +301,7 @@ async def complete_reminder(
     reminder_service = get_reminder_service()
     success = reminder_service.track_interaction(
         reminder_id,
-        current_user["_id"],
+        get_user_id(current_user),
         "completed",
         1.0
     )
@@ -308,7 +322,7 @@ async def snooze_reminder(
     reminder_service = get_reminder_service()
     result = reminder_service.snooze_reminder(
         reminder_id,
-        current_user["_id"],
+        get_user_id(current_user),
         request.duration_minutes
     )
     
@@ -327,7 +341,7 @@ async def dismiss_reminder(
     reminder_service = get_reminder_service()
     success = reminder_service.track_interaction(
         reminder_id,
-        current_user["_id"],
+        get_user_id(current_user),
         "dismissed",
         0.0
     )
@@ -349,7 +363,7 @@ async def sync_reminder_to_calendar(
     reminder_service = get_reminder_service()
     reminder = reminder_service.reminders_collection.find_one({
         "_id": ObjectId(reminder_id),
-        "user_id": current_user["_id"]
+        "user_id": get_user_id(current_user)
     })
     
     if not reminder:
@@ -377,7 +391,7 @@ async def sync_reminder_to_calendar(
     
     # Sync to calendar
     calendar_event_id = reminder_service.sync_to_calendar(
-        current_user["_id"],
+        get_user_id(current_user),
         reminder
     )
     
@@ -401,7 +415,7 @@ async def remove_calendar_sync(
     reminder_service = get_reminder_service()
     reminder = reminder_service.reminders_collection.find_one({
         "_id": ObjectId(reminder_id),
-        "user_id": current_user["_id"]
+        "user_id": get_user_id(current_user)
     })
     
     if not reminder:
@@ -452,7 +466,7 @@ async def get_calendar_formatted_reminders(
     
     reminder_service = get_reminder_service()
     query = {
-        "user_id": current_user["_id"],
+        "user_id": get_user_id(current_user),
         "calendar_integration.synced_to_calendar": True
     }
     
@@ -494,7 +508,7 @@ async def reschedule_reminder(
     # Update reminder
     reminder_service = get_reminder_service()
     result = reminder_service.reminders_collection.update_one(
-        {"_id": ObjectId(reminder_id), "user_id": current_user["_id"]},
+        {"_id": ObjectId(reminder_id), "user_id": get_user_id(current_user)},
         {
             "$set": {
                 "scheduled_for": new_time,
@@ -538,7 +552,7 @@ async def get_reminder_preferences(
     """
     
     reminder_service = get_reminder_service()
-    prefs = reminder_service._get_user_preferences(current_user["_id"])
+    prefs = reminder_service._get_user_preferences(get_user_id(current_user))
     
     return ReminderPreferencesResponse(
         enabled=prefs["enabled"],
@@ -588,7 +602,7 @@ async def update_reminder_preferences(
     
     reminder_service = get_reminder_service()
     reminder_service.preferences_collection.update_one(
-        {"user_id": current_user["_id"]},
+        {"user_id": get_user_id(current_user)},
         {"$set": update_data},
         upsert=True
     )
@@ -610,7 +624,7 @@ async def configure_calendar_sync(
     
     reminder_service = get_reminder_service()
     reminder_service.preferences_collection.update_one(
-        {"user_id": current_user["_id"]},
+        {"user_id": get_user_id(current_user)},
         {"$set": {"calendar_auto_sync": enable}},
         upsert=True
     )

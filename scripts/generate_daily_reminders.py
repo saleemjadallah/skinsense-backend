@@ -50,7 +50,11 @@ def main():
     logger.info("="*60)
     
     try:
-        # Initialize database
+        # Initialize database connection first
+        from app.database import connect_to_mongo
+        connect_to_mongo()
+        
+        # Get database
         database = get_database()
         
         # Initialize reminder service
