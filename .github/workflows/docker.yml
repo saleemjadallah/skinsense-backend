@@ -88,14 +88,18 @@ jobs:
         
         cd ~/skinsense-backend || { echo "Directory not found"; exit 1; }
         
-        # Stop existing containers
-        docker-compose down || true
+        # Clean up existing containers and volumes
+        docker-compose down -v || true
+        docker system prune -f || true
+        
+        # Remove old images to avoid conflicts
+        docker rmi $(docker images -q skinsense-backend_api) 2>/dev/null || true
         
         # Build new image locally on EC2
         docker-compose build --no-cache
         
-        # Start containers
-        docker-compose up -d
+        # Start containers fresh
+        docker-compose up -d --force-recreate --remove-orphans
         
         # Wait for services
         sleep 10
