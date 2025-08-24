@@ -1,4 +1,4 @@
-name: Build and Push Docker Image
+name: Build Docker Image (Optional Push)
 
 on:
   push:
@@ -7,12 +7,8 @@ on:
       - 'v*'
   workflow_dispatch:
 
-env:
-  DOCKER_REGISTRY: docker.io
-  IMAGE_NAME: skinsense-backend
-
 jobs:
-  build-and-push:
+  build:
     runs-on: ubuntu-latest
     
     steps:
@@ -22,68 +18,99 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v2
     
+    # Only login to Docker Hub if credentials are provided
+    - name: Check Docker Hub credentials
+      id: docker_creds
+      run: |
+        if [ -n "${{ secrets.DOCKER_USERNAME }}" ] && [ -n "${{ secrets.DOCKER_PASSWORD }}" ]; then
+          echo "has_creds=true" >> $GITHUB_OUTPUT
+          echo "✅ Docker Hub credentials found"
+        else
+          echo "has_creds=false" >> $GITHUB_OUTPUT
+          echo "⚠️ Docker Hub credentials not found - will build locally only"
+        fi
+    
     - name: Log in to Docker Hub
-      if: github.event_name != 'pull_request'
+      if: steps.docker_creds.outputs.has_creds == 'true'
       uses: docker/login-action@v2
       with:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
     
-    - name: Extract metadata
-      id: meta
-      uses: docker/metadata-action@v4
-      with:
-        images: ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}
-        tags: |
-          type=ref,event=branch
-          type=ref,event=pr
-          type=semver,pattern={{version}}
-          type=semver,pattern={{major}}.{{minor}}
-          type=sha,prefix={{branch}}-
-          type=raw,value=latest,enable={{is_default_branch}}
+    # Build image locally for testing
+    - name: Build Docker image
+      run: |
+        docker build -t skinsense-backend:latest .
+        docker tag skinsense-backend:latest skinsense-backend:${{ github.sha }}
+        echo "✅ Docker image built successfully"
     
-    - name: Build and push Docker image
-      uses: docker/build-push-action@v4
-      with:
-        context: .
-        platforms: linux/amd64,linux/arm64
-        push: ${{ github.event_name != 'pull_request' }}
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
-        build-args: |
-          VERSION=${{ github.sha }}
-          BUILD_DATE=${{ github.event.head_commit.timestamp }}
+    # Push to Docker Hub only if logged in
+    - name: Push to Docker Hub
+      if: steps.docker_creds.outputs.has_creds == 'true'
+      run: |
+        docker tag skinsense-backend:latest ${{ secrets.DOCKER_USERNAME }}/skinsense-backend:latest
+        docker tag skinsense-backend:latest ${{ secrets.DOCKER_USERNAME }}/skinsense-backend:${{ github.sha }}
+        docker push ${{ secrets.DOCKER_USERNAME }}/skinsense-backend:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/skinsense-backend:${{ github.sha }}
+        echo "✅ Docker image pushed to Docker Hub"
     
-    - name: Update deployment on EC2 (if main branch)
+    # Deploy to EC2 directly (without Docker Hub)
+    - name: Deploy to EC2
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
       run: |
+        # Check if EC2 credentials exist
+        if [ -z "${{ secrets.EC2_KEY }}" ] || [ -z "${{ secrets.EC2_HOST }}" ]; then
+          echo "⚠️ EC2 credentials not found - skipping deployment"
+          exit 0
+        fi
+        
+        echo "🚀 Deploying to EC2..."
+        
         # Setup SSH
         mkdir -p ~/.ssh
         echo "${{ secrets.EC2_KEY }}" | base64 -d > ~/.ssh/ec2_key.pem
         chmod 600 ~/.ssh/ec2_key.pem
-        ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+        ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
         
-        # Update Docker image on EC2
-        ssh -i ~/.ssh/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << ENDSSH
-        cd ~/skinsense-backend
+        # Create deployment script
+        cat > deploy.sh << 'EOF'
+        #!/bin/bash
+        set -e
         
-        # Pull latest image
-        docker pull ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+        cd ~/skinsense-backend || { echo "Directory not found"; exit 1; }
         
-        # Update docker-compose to use the new image
-        sed -i 's|build: .|image: ${{ env.DOCKER_REGISTRY }}/${{ secrets.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest|g' docker-compose.yml
+        # Stop existing containers
+        docker-compose down || true
         
-        # Restart containers with new image
-        docker-compose down
+        # Build new image locally on EC2
+        docker-compose build --no-cache
+        
+        # Start containers
         docker-compose up -d
+        
+        # Wait for services
+        sleep 10
+        
+        # Health check
+        curl -f http://localhost:8000/health || { 
+          echo "Health check failed"
+          docker-compose logs --tail=50
+          exit 1
+        }
         
         # Clean up old images
         docker image prune -f
         
-        echo "✅ Docker image updated on EC2!"
-        ENDSSH
+        echo "✅ Deployment successful!"
+        EOF
+        
+        # Copy and execute deployment script
+        scp -o StrictHostKeyChecking=no -i ~/.ssh/ec2_key.pem deploy.sh ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/
+        ssh -o StrictHostKeyChecking=no -i ~/.ssh/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "chmod +x ~/deploy.sh && ~/deploy.sh"
         
         # Clean up
-        rm -f ~/.ssh/ec2_key.pem
+        rm -f ~/.ssh/ec2_key.pem deploy.sh
+        
+        echo "🎉 Deployment to EC2 completed!"
+        echo "API URL: http://${{ secrets.EC2_HOST }}:8000"
+        echo "Documentation: http://${{ secrets.EC2_HOST }}:8000/docs"
