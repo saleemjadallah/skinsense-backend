@@ -86,39 +86,48 @@ jobs:
       run: |
         scp -i ~/.ssh/ec2_key.pem deployment.tar.gz ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/
     
-    - name: Deploy on EC2 with Docker Compose (with fallback)
+    - name: Deploy on EC2 with Docker Compose
       run: |
         ssh -i ~/.ssh/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'ENDSSH'
         echo "🚀 Starting deployment..."
         
-        # AGGRESSIVE CLEANUP - Nuclear option for ContainerConfig error
-        echo "🔥 NUCLEAR CLEANUP - Removing everything Docker-related..."
+        # STEP 1: Upgrade docker-compose to fix ContainerConfig bug
+        echo "📦 Step 1: Checking and upgrading docker-compose..."
+        COMPOSE_VERSION=$(docker-compose --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "0.0.0")
+        echo "Current docker-compose version: $COMPOSE_VERSION"
         
-        # Step 1: Kill all Docker processes
-        echo "Step 1: Killing Docker processes..."
-        sudo pkill -9 docker 2>/dev/null || true
-        sleep 2
+        # Install Docker Compose v2 (plugin version) which doesn't have the ContainerConfig bug
+        echo "Installing Docker Compose v2 (plugin)..."
+        sudo mkdir -p /usr/local/lib/docker/cli-plugins
+        sudo curl -SL https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64 -o /usr/local/lib/docker/cli-plugins/docker-compose
+        sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
         
-        # Step 2: Restart Docker daemon
-        echo "Step 2: Restarting Docker daemon..."
-        sudo systemctl restart docker
-        sleep 5
+        # Also update standalone docker-compose
+        sudo curl -SL https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose
+        sudo chmod +x /usr/local/bin/docker-compose
         
-        # Step 3: Remove EVERYTHING
-        echo "Step 3: Removing all containers, images, volumes, networks..."
-        docker kill $(docker ps -q) 2>/dev/null || true
-        docker rm -f $(docker ps -aq) 2>/dev/null || true
-        docker rmi -f $(docker images -aq) 2>/dev/null || true
-        docker volume rm -f $(docker volume ls -q) 2>/dev/null || true
+        echo "Docker Compose updated to: $(docker-compose version)"
+        
+        # STEP 2: Clean up with proper docker-compose down
+        echo "📦 Step 2: Cleaning up existing deployment..."
+        cd ~/skinsense-backend 2>/dev/null && docker-compose down --volumes --remove-orphans 2>/dev/null || true
+        
+        # STEP 3: Nuclear cleanup of corrupted containers
+        echo "📦 Step 3: Removing corrupted containers and volumes..."
+        docker ps -aq | xargs -r docker rm -f 2>/dev/null || true
+        docker volume ls -q | xargs -r docker volume rm -f 2>/dev/null || true
         docker network prune -f 2>/dev/null || true
+        
+        # STEP 4: Clean Docker system
+        echo "📦 Step 4: Cleaning Docker system..."
         docker system prune -af --volumes 2>/dev/null || true
         
-        # Step 4: Clean Docker directory (careful!)
-        echo "Step 4: Cleaning Docker directories..."
-        sudo rm -rf /var/lib/docker/containers/* 2>/dev/null || true
-        sudo rm -rf /var/lib/docker/volumes/* 2>/dev/null || true
-        sudo systemctl restart docker
-        sleep 5
+        # If still having issues, restart Docker daemon
+        if docker ps 2>&1 | grep -q "ContainerConfig"; then
+          echo "⚠️ ContainerConfig error detected, restarting Docker..."
+          sudo systemctl restart docker
+          sleep 5
+        fi
         
         # Backup old deployment
         if [ -d ~/skinsense-backend ]; then
@@ -141,56 +150,44 @@ jobs:
         
         echo "✅ docker-compose.yml found"
         
-        # Try docker-compose first
-        echo "🔨 Attempting deployment with docker-compose..."
-        if docker-compose up -d --build --force-recreate --remove-orphans 2>&1; then
-          echo "✅ Docker Compose deployment successful!"
+        # Deploy with docker-compose (v2 should work without ContainerConfig issues)
+        echo "🔨 Building and deploying with Docker Compose v2..."
+        
+        # Use the new docker compose command (without hyphen) if available
+        if command -v docker &> /dev/null && docker compose version &> /dev/null; then
+          echo "Using Docker Compose v2 plugin..."
+          docker compose build --no-cache
+          docker compose up -d --force-recreate --remove-orphans
+          sleep 10
+          docker compose ps
+          docker compose logs --tail=50
+        else
+          echo "Using standalone docker-compose..."
+          docker-compose build --no-cache
+          docker-compose up -d --force-recreate --remove-orphans
           sleep 10
           docker-compose ps
           docker-compose logs --tail=50
-        else
-          echo "⚠️ Docker Compose failed, falling back to plain Docker..."
-          
-          # FALLBACK: Use plain Docker commands
-          echo "🔄 Using plain Docker commands as fallback..."
-          
-          # Build the image
-          docker build -t skinsense-api:latest .
-          
-          # Start Redis
-          docker run -d \
-            --name skinsense_redis \
-            --restart always \
-            -p 6379:6379 \
-            redis:7-alpine
-          
-          # Wait for Redis
-          sleep 3
-          
-          # Start API
-          docker run -d \
-            --name skinsense_api \
-            --restart always \
-            -p 8000:8000 \
-            --link skinsense_redis:redis \
-            -e REDIS_URL=redis://skinsense_redis:6379 \
-            --env-file .env \
-            skinsense-api:latest
-          
-          echo "✅ Plain Docker deployment completed!"
-          sleep 10
-          docker ps
-          docker logs skinsense_api --tail=50
         fi
         
+        echo "✅ Docker Compose deployment completed!"
+        
         # Health check
+        echo "🏥 Running health check..."
+        sleep 5
         if curl -f http://localhost:8000/health; then
           echo "✅ Health check passed!"
           echo "🎉 Deployment successful!"
+          echo "📊 Service status:"
+          docker ps
         else
           echo "❌ Health check failed. Checking logs..."
           docker ps -a
-          docker logs skinsense_api --tail=100 2>/dev/null || docker-compose logs --tail=100
+          if command -v docker &> /dev/null && docker compose version &> /dev/null; then
+            docker compose logs --tail=100
+          else
+            docker-compose logs --tail=100
+          fi
           exit 1
         fi
         ENDSSH
