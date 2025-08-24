@@ -86,35 +86,39 @@ jobs:
       run: |
         scp -i ~/.ssh/ec2_key.pem deployment.tar.gz ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/
     
-    - name: Deploy on EC2 with Docker Compose
+    - name: Deploy on EC2 with Docker Compose (with fallback)
       run: |
         ssh -i ~/.ssh/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'ENDSSH'
-        echo "🚀 Starting deployment with Docker Compose..."
+        echo "🚀 Starting deployment..."
         
-        # Step 1: Remove specific problematic containers by name pattern
-        echo "📦 Step 1: Removing problematic containers by name..."
-        docker ps -a --format "{{.Names}}" | grep -E "skinsense-backend_" | xargs -r docker rm -f 2>/dev/null || true
+        # AGGRESSIVE CLEANUP - Nuclear option for ContainerConfig error
+        echo "🔥 NUCLEAR CLEANUP - Removing everything Docker-related..."
         
-        # Step 2: Stop ALL containers
-        echo "📦 Step 2: Stopping all containers..."
-        docker stop $(docker ps -aq) 2>/dev/null || true
+        # Step 1: Kill all Docker processes
+        echo "Step 1: Killing Docker processes..."
+        sudo pkill -9 docker 2>/dev/null || true
+        sleep 2
         
-        # Step 3: Remove ALL containers
-        echo "📦 Step 3: Removing all containers..."
+        # Step 2: Restart Docker daemon
+        echo "Step 2: Restarting Docker daemon..."
+        sudo systemctl restart docker
+        sleep 5
+        
+        # Step 3: Remove EVERYTHING
+        echo "Step 3: Removing all containers, images, volumes, networks..."
+        docker kill $(docker ps -q) 2>/dev/null || true
         docker rm -f $(docker ps -aq) 2>/dev/null || true
+        docker rmi -f $(docker images -aq) 2>/dev/null || true
+        docker volume rm -f $(docker volume ls -q) 2>/dev/null || true
+        docker network prune -f 2>/dev/null || true
+        docker system prune -af --volumes 2>/dev/null || true
         
-        # Step 4: Remove specific volumes that might be corrupted
-        echo "📦 Step 4: Removing volumes..."
-        docker volume rm skinsense-backend_redis_data 2>/dev/null || true
-        docker volume prune -f || true
-        
-        # Step 5: Remove all images to ensure fresh build
-        echo "📦 Step 5: Removing all Docker images..."
-        docker rmi -f $(docker images -q) 2>/dev/null || true
-        
-        # Step 6: Complete system prune
-        echo "📦 Step 6: Final Docker system cleanup..."
-        docker system prune -af --volumes || true
+        # Step 4: Clean Docker directory (careful!)
+        echo "Step 4: Cleaning Docker directories..."
+        sudo rm -rf /var/lib/docker/containers/* 2>/dev/null || true
+        sudo rm -rf /var/lib/docker/volumes/* 2>/dev/null || true
+        sudo systemctl restart docker
+        sleep 5
         
         # Backup old deployment
         if [ -d ~/skinsense-backend ]; then
@@ -132,50 +136,63 @@ jobs:
         # Verify docker-compose.yml exists
         if [ ! -f docker-compose.yml ]; then
           echo "❌ docker-compose.yml not found!"
-          ls -la
           exit 1
         fi
         
-        echo "✅ docker-compose.yml found. Contents:"
-        cat docker-compose.yml
+        echo "✅ docker-compose.yml found"
         
-        # Step 7: Run docker-compose down in the new directory to ensure clean state
-        echo "📦 Step 7: Running docker-compose down to ensure clean state..."
-        docker-compose down -v --remove-orphans 2>/dev/null || true
-        
-        # Update docker-compose if needed (for older versions)
-        if command -v docker-compose &> /dev/null; then
-          COMPOSE_CMD="docker-compose"
+        # Try docker-compose first
+        echo "🔨 Attempting deployment with docker-compose..."
+        if docker-compose up -d --build --force-recreate --remove-orphans 2>&1; then
+          echo "✅ Docker Compose deployment successful!"
+          sleep 10
+          docker-compose ps
+          docker-compose logs --tail=50
         else
-          COMPOSE_CMD="docker compose"
+          echo "⚠️ Docker Compose failed, falling back to plain Docker..."
+          
+          # FALLBACK: Use plain Docker commands
+          echo "🔄 Using plain Docker commands as fallback..."
+          
+          # Build the image
+          docker build -t skinsense-api:latest .
+          
+          # Start Redis
+          docker run -d \
+            --name skinsense_redis \
+            --restart always \
+            -p 6379:6379 \
+            redis:7-alpine
+          
+          # Wait for Redis
+          sleep 3
+          
+          # Start API
+          docker run -d \
+            --name skinsense_api \
+            --restart always \
+            -p 8000:8000 \
+            --link skinsense_redis:redis \
+            -e REDIS_URL=redis://skinsense_redis:6379 \
+            --env-file .env \
+            skinsense-api:latest
+          
+          echo "✅ Plain Docker deployment completed!"
+          sleep 10
+          docker ps
+          docker logs skinsense_api --tail=50
         fi
-        
-        # Build and start with docker-compose
-        echo "🔨 Building with Docker Compose..."
-        $COMPOSE_CMD build --no-cache
-        
-        echo "🚀 Starting services..."
-        $COMPOSE_CMD up -d --force-recreate --remove-orphans
-        
-        # Wait for services
-        sleep 10
-        
-        # Check status
-        echo "✅ Checking services..."
-        $COMPOSE_CMD ps
-        
-        # Show logs
-        echo "📋 API logs:"
-        $COMPOSE_CMD logs --tail=50 api
         
         # Health check
-        curl -f http://localhost:8000/health || {
-          echo "⚠️ Health check failed. Full logs:"
-          $COMPOSE_CMD logs
+        if curl -f http://localhost:8000/health; then
+          echo "✅ Health check passed!"
+          echo "🎉 Deployment successful!"
+        else
+          echo "❌ Health check failed. Checking logs..."
+          docker ps -a
+          docker logs skinsense_api --tail=100 2>/dev/null || docker-compose logs --tail=100
           exit 1
-        }
-        
-        echo "✅ Deployment successful with Docker Compose!"
+        fi
         ENDSSH
     
     - name: Clean up
@@ -192,8 +209,6 @@ jobs:
           echo "🚀 Deployment to EC2 successful!"
           echo "API URL: http://${{ secrets.EC2_HOST }}:8000"
           echo "Documentation: http://${{ secrets.EC2_HOST }}:8000/docs"
-          echo ""
-          echo "✅ Deployed with Docker Compose for better scalability"
         else
           echo "❌ Deployment failed. Check the logs for details."
         fi
