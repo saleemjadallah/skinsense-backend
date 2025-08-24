@@ -76,7 +76,14 @@ jobs:
     - name: Setup SSH key
       run: |
         mkdir -p ~/.ssh
-        echo "${{ secrets.EC2_KEY }}" | base64 -d > ~/.ssh/ec2_key.pem
+        
+        # Decode EC2 key with error handling
+        echo "${{ secrets.EC2_KEY }}" | base64 -d > ~/.ssh/ec2_key.pem 2>/dev/null || {
+          echo "❌ Failed to decode EC2_KEY. Make sure it's properly base64 encoded."
+          echo "To encode your key: base64 -i your-key.pem | tr -d '\n'"
+          exit 1
+        }
+        
         chmod 600 ~/.ssh/ec2_key.pem
         ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
     
