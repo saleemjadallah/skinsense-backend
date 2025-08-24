@@ -23,6 +23,7 @@ jobs:
         
         # Copy necessary files
         cp -r app deployment/
+        cp -r scripts deployment/ 2>/dev/null || mkdir -p deployment/scripts
         cp requirements.txt deployment/
         cp Dockerfile deployment/
         cp docker-compose.prod.yml deployment/docker-compose.yml

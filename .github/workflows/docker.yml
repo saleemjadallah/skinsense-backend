@@ -40,6 +40,8 @@ jobs:
     # Build image locally for testing
     - name: Build Docker image
       run: |
+        # Ensure scripts directory exists (even if empty)
+        mkdir -p scripts
         docker build -t skinsense-backend:latest .
         docker tag skinsense-backend:latest skinsense-backend:${{ github.sha }}
         echo "✅ Docker image built successfully"
