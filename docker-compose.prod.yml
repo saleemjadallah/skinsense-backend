@@ -7,8 +7,6 @@ services:
     ports:
       - "6379:6379"
     restart: unless-stopped
-    networks:
-      - skinsense-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 30s
@@ -31,8 +29,6 @@ services:
     depends_on:
       redis:
         condition: service_started
-    networks:
-      - skinsense-network
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
     restart: unless-stopped
     healthcheck:
@@ -41,7 +37,3 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-
-networks:
-  skinsense-network:
-    driver: bridge

@@ -113,9 +113,12 @@ jobs:
         cd ~/skinsense-backend 2>/dev/null && docker-compose down --volumes --remove-orphans 2>/dev/null || true
         
         # STEP 3: Nuclear cleanup of corrupted containers
-        echo "📦 Step 3: Removing corrupted containers and volumes..."
+        echo "📦 Step 3: Removing corrupted containers, volumes, and networks..."
         docker ps -aq | xargs -r docker rm -f 2>/dev/null || true
         docker volume ls -q | xargs -r docker volume rm -f 2>/dev/null || true
+        
+        # Remove all custom networks (keep default ones)
+        docker network ls --format "{{.Name}}" | grep -v "bridge\|host\|none" | xargs -r docker network rm 2>/dev/null || true
         docker network prune -f 2>/dev/null || true
         
         # STEP 4: Clean Docker system
