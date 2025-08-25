@@ -172,15 +172,32 @@ jobs:
         
         # Final network cleanup before deployment
         echo "Final network cleanup..."
-        docker network rm skinsense-backend_default 2>/dev/null || true
-        docker network rm skinsense_network 2>/dev/null || true
-        docker network ls | grep skinsense | awk '{print $2}' | xargs -r docker network rm 2>/dev/null || true
+        
+        # Get list of all networks with 'skinsense' in the name
+        SKINSENSE_NETWORKS=$(docker network ls --format "{{.Name}}" | grep -E "skinsense|backend" || true)
+        if [ ! -z "$SKINSENSE_NETWORKS" ]; then
+          echo "Found existing networks: $SKINSENSE_NETWORKS"
+          for network in $SKINSENSE_NETWORKS; do
+            echo "Removing network: $network"
+            # First disconnect any containers from the network
+            docker network inspect $network --format '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null | xargs -r -n1 docker network disconnect -f $network 2>/dev/null || true
+            # Then remove the network
+            docker network rm $network 2>/dev/null || true
+          done
+        fi
+        
+        # Additional cleanup for any remaining networks
+        docker network prune -f 2>/dev/null || true
         
         # Use the new docker compose command (without hyphen) if available
         if command -v docker &> /dev/null && docker compose version &> /dev/null; then
           echo "Using Docker Compose v2 plugin..."
           # Remove any existing containers first
           docker compose down --volumes --remove-orphans 2>/dev/null || true
+          
+          # One more network cleanup specifically for compose networks
+          docker network ls --format "{{.Name}}" | grep -E "skinsense_network" | xargs -r docker network rm -f 2>/dev/null || true
+          
           # Build and deploy
           docker compose build --no-cache
           docker compose up -d --force-recreate --remove-orphans --renew-anon-volumes
@@ -191,6 +208,10 @@ jobs:
           echo "Using standalone docker-compose..."
           # Remove any existing containers first
           docker-compose down --volumes --remove-orphans 2>/dev/null || true
+          
+          # One more network cleanup specifically for compose networks
+          docker network ls --format "{{.Name}}" | grep -E "skinsense_network" | xargs -r docker network rm -f 2>/dev/null || true
+          
           # Build and deploy
           docker-compose build --no-cache
           docker-compose up -d --force-recreate --remove-orphans --renew-anon-volumes
