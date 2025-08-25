@@ -208,11 +208,36 @@ jobs:
         # Remove any orphaned containers
         docker rm -f skinsense_redis skinsense_api 2>/dev/null || true
         
+        # Force stop and remove ALL containers (nuclear option for stuck networks)
+        echo "Force stopping all containers to free up networks..."
+        docker stop $(docker ps -aq) 2>/dev/null || true
+        docker rm -f $(docker ps -aq) 2>/dev/null || true
+        
         # Clean up networks - but only after containers are removed
         echo "Cleaning up networks..."
+        
+        # List all networks for debugging
+        echo "Current networks:"
+        docker network ls
+        
+        # Remove all possible network variations that docker-compose might have created
         docker network rm skinsense-backend_default 2>/dev/null || true
+        docker network rm skinsense-backend_app_network 2>/dev/null || true
         docker network rm skinsense_default 2>/dev/null || true
+        docker network rm skinsense_app_network 2>/dev/null || true
+        docker network rm app_network 2>/dev/null || true
+        
+        # Remove any network that starts with 'skinsense'
+        for net in $(docker network ls --format "{{.Name}}" | grep ^skinsense); do
+            echo "Removing network: $net"
+            docker network rm "$net" 2>/dev/null || true
+        done
+        
+        # Final prune
         docker network prune -f 2>/dev/null || true
+        
+        echo "Networks after cleanup:"
+        docker network ls
         
         # Now deploy with docker-compose
         echo "🚀 Starting fresh deployment with docker-compose..."
