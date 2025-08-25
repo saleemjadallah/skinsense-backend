@@ -110,7 +110,10 @@ jobs:
         
         # STEP 2: Clean up with proper docker-compose down
         echo "📦 Step 2: Cleaning up existing deployment..."
+        # Use --remove-orphans to clean up any services removed from compose file
         cd ~/skinsense-backend 2>/dev/null && docker-compose down --volumes --remove-orphans 2>/dev/null || true
+        # Also try with project name in case it's different
+        cd ~/skinsense-backend 2>/dev/null && docker-compose -p skinsense-backend down --volumes --remove-orphans 2>/dev/null || true
         
         # STEP 3: Nuclear cleanup of corrupted containers
         echo "📦 Step 3: Removing corrupted containers, volumes, and networks..."
@@ -159,11 +162,16 @@ jobs:
         tar -xzf ~/deployment.tar.gz
         rm ~/deployment.tar.gz
         
-        # Skip docker-compose.yml check since we're not using it
-        echo "✅ Deployment files extracted"
+        # Verify docker-compose.yml exists
+        if [ ! -f docker-compose.yml ]; then
+          echo "❌ docker-compose.yml not found!"
+          exit 1
+        fi
         
-        # Deploy with direct Docker commands (bypassing docker-compose)
-        echo "🔨 Building and deploying with direct Docker commands..."
+        echo "✅ docker-compose.yml found"
+        
+        # Deploy with docker-compose
+        echo "🔨 Building and deploying with Docker Compose..."
         
         # Final network cleanup before deployment
         echo "Final network cleanup..."
@@ -184,77 +192,44 @@ jobs:
         # Additional cleanup for any remaining networks
         docker network prune -f 2>/dev/null || true
         
-        # Direct Docker deployment (no docker-compose)
-        echo "Starting direct Docker deployment..."
+        # Proper docker-compose deployment with network cleanup
+        echo "Starting Docker Compose deployment..."
         
-        # Nuclear option - clean EVERYTHING
-        echo "🔥 Nuclear cleanup - removing ALL Docker resources..."
-        docker stop $(docker ps -aq) 2>/dev/null || true
-        docker rm -f $(docker ps -aq) 2>/dev/null || true
-        docker volume rm $(docker volume ls -q) 2>/dev/null || true
+        # First, clean up any existing containers and networks properly
+        echo "📦 Cleaning up any existing deployment..."
         
-        # List all networks for debugging
-        echo "Current networks before cleanup:"
-        docker network ls
+        # Stop and remove containers with docker-compose (handles network dependencies)
+        docker-compose down --volumes --remove-orphans 2>/dev/null || true
         
-        # Remove ALL non-default networks
-        for network in $(docker network ls --format "{{.Name}}"); do
-          if [[ "$network" != "bridge" && "$network" != "host" && "$network" != "none" ]]; then
-            echo "Removing network: $network"
-            docker network rm -f "$network" 2>/dev/null || true
-          fi
-        done
+        # Also try with common project names that might have been used
+        docker-compose -p skinsense down --volumes --remove-orphans 2>/dev/null || true
+        docker-compose -p skinsense-backend down --volumes --remove-orphans 2>/dev/null || true
         
-        # System prune to clean everything
-        docker system prune -af --volumes 2>/dev/null || true
+        # Remove any orphaned containers
+        docker rm -f skinsense_redis skinsense_api 2>/dev/null || true
         
-        echo "Networks after cleanup:"
-        docker network ls
+        # Clean up networks - but only after containers are removed
+        echo "Cleaning up networks..."
+        docker network rm skinsense-backend_default 2>/dev/null || true
+        docker network rm skinsense_default 2>/dev/null || true
+        docker network prune -f 2>/dev/null || true
         
-        # Build images first
-        echo "Building Docker images..."
-        docker build -t skinsense_api:latest -f Dockerfile .
-        docker pull redis:7-alpine
+        # Now deploy with docker-compose
+        echo "🚀 Starting fresh deployment with docker-compose..."
         
-        # Start services using docker run instead of compose
-        echo "Starting services with docker run..."
-        
-        # Start Redis
-        docker run -d \
-          --name skinsense_redis \
-          -p 6379:6379 \
-          --restart unless-stopped \
-          redis:7-alpine
-        
-        # Wait for Redis to be ready
-        sleep 5
-        
-        # Get Redis IP address
-        REDIS_IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' skinsense_redis)
-        echo "Redis IP: $REDIS_IP"
-        
-        # Start API with Redis IP
-        docker run -d \
-          --name skinsense_api \
-          -p 8000:8000 \
-          --env-file .env \
-          -e REDIS_URL=redis://$REDIS_IP:6379 \
-          -e ENVIRONMENT=production \
-          -e DEBUG=false \
-          --restart unless-stopped \
-          skinsense_api:latest \
-          uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+        # Build and start services
+        docker-compose build --no-cache
+        docker-compose up -d --force-recreate --remove-orphans
         
         # Wait for services to start
         echo "Waiting for services to start..."
         sleep 15
         
         echo "Checking container status..."
-        docker ps
+        docker-compose ps
         
         echo "Fetching logs..."
-        docker logs skinsense_api --tail=50
-        docker logs skinsense_redis --tail=20
+        docker-compose logs --tail=50
         
         echo "✅ Docker Compose deployment completed!"
         
