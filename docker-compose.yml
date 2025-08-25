@@ -44,5 +44,4 @@ services:
 
 networks:
   skinsense_network:
-    name: skinsense_network
     driver: bridge

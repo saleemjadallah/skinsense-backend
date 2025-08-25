@@ -193,59 +193,75 @@ jobs:
         if command -v docker &> /dev/null && docker compose version &> /dev/null; then
           echo "Using Docker Compose v2 plugin..."
           
-          # Stop and remove everything related to this project
-          docker compose -p skinsense down --volumes --remove-orphans 2>/dev/null || true
+          # First, stop any running containers
+          echo "Stopping any running containers..."
+          docker stop $(docker ps -q --filter "name=skinsense") 2>/dev/null || true
           
-          # Force remove the specific network if it exists
+          # Remove all skinsense containers
+          echo "Removing old containers..."
+          docker rm -f $(docker ps -aq --filter "name=skinsense") 2>/dev/null || true
+          
+          # Clean up the network properly
+          echo "Cleaning up Docker networks..."
+          # Remove the default compose network
+          docker network rm skinsense_default 2>/dev/null || true
+          # Try to remove the skinsense_network
           docker network rm skinsense_network 2>/dev/null || true
+          # Remove any network with skinsense in the name
+          docker network ls --format "{{.Name}}" | grep skinsense | xargs -r docker network rm 2>/dev/null || true
           
-          # Clean up any orphaned containers
-          docker ps -a --format "{{.Names}}" | grep -E "skinsense" | xargs -r docker rm -f 2>/dev/null || true
-          
-          # Build and deploy with project name to avoid conflicts
+          # Build and deploy
           echo "Building Docker images..."
-          docker compose -p skinsense build --no-cache
+          docker compose build --no-cache
           
           echo "Starting services..."
-          docker compose -p skinsense up -d --force-recreate --remove-orphans
+          docker compose up -d --force-recreate --remove-orphans
           
           # Wait for services to start
           echo "Waiting for services to start..."
           sleep 15
           
           echo "Checking container status..."
-          docker compose -p skinsense ps
+          docker compose ps
           
           echo "Fetching logs..."
-          docker compose -p skinsense logs --tail=50
+          docker compose logs --tail=50
         else
           echo "Using standalone docker-compose..."
           
-          # Stop and remove everything related to this project
-          docker-compose -p skinsense down --volumes --remove-orphans 2>/dev/null || true
+          # First, stop any running containers
+          echo "Stopping any running containers..."
+          docker stop $(docker ps -q --filter "name=skinsense") 2>/dev/null || true
           
-          # Force remove the specific network if it exists
+          # Remove all skinsense containers
+          echo "Removing old containers..."
+          docker rm -f $(docker ps -aq --filter "name=skinsense") 2>/dev/null || true
+          
+          # Clean up the network properly
+          echo "Cleaning up Docker networks..."
+          # Remove the default compose network
+          docker network rm skinsense_default 2>/dev/null || true
+          # Try to remove the skinsense_network
           docker network rm skinsense_network 2>/dev/null || true
+          # Remove any network with skinsense in the name
+          docker network ls --format "{{.Name}}" | grep skinsense | xargs -r docker network rm 2>/dev/null || true
           
-          # Clean up any orphaned containers
-          docker ps -a --format "{{.Names}}" | grep -E "skinsense" | xargs -r docker rm -f 2>/dev/null || true
-          
-          # Build and deploy with project name to avoid conflicts
+          # Build and deploy
           echo "Building Docker images..."
-          docker-compose -p skinsense build --no-cache
+          docker-compose build --no-cache
           
           echo "Starting services..."
-          docker-compose -p skinsense up -d --force-recreate --remove-orphans
+          docker-compose up -d --force-recreate --remove-orphans
           
           # Wait for services to start
           echo "Waiting for services to start..."
           sleep 15
           
           echo "Checking container status..."
-          docker-compose -p skinsense ps
+          docker-compose ps
           
           echo "Fetching logs..."
-          docker-compose -p skinsense logs --tail=50
+          docker-compose logs --tail=50
         fi
         
         echo "✅ Docker Compose deployment completed!"
