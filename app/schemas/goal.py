@@ -78,7 +78,7 @@ class GoalUpdate(BaseModel):
     description: Optional[str] = Field(None, max_length=500)
     target_value: Optional[float] = Field(None, gt=0)
     target_date: Optional[datetime] = None
-    status: Optional[Literal["active", "paused", "abandoned"]] = None
+    status: Optional[Literal["active", "paused", "abandoned", "completed"]] = None
     abandon_reason: Optional[str] = Field(None, max_length=500)
 
 

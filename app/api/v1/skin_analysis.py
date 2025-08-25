@@ -1213,13 +1213,64 @@ async def achievements_summary(
             logger.info(f"[ACHIEVEMENTS DEBUG] Date {d0} is before expected {expected}, breaking")
             break
 
-    # If cache has any signal, return it
+    # If cache has any signal, prefer it but enrich streak/today with skin_analyses when needed
     if cached_total > 0 or cached_today > 0 or streak_cached > 0:
+        enriched_streak = streak_cached
+        enriched_today = cached_today
+
+        # If cached streak is 0 (or missing), compute streak from skin_analyses using tz-aware bucketing
+        if streak_cached == 0:
+            try:
+                # Determine user_id format that exists in skin_analyses
+                total_analyses_count = db.skin_analyses.count_documents({"user_id": user_oid})
+                if total_analyses_count == 0:
+                    total_analyses_count = db.skin_analyses.count_documents({"user_id": str(current_user.id)})
+                    user_query = str(current_user.id) if total_analyses_count > 0 else user_oid
+                else:
+                    user_query = user_oid
+
+                # Build local-day buckets for the last year
+                start_utc = today_start_utc - timedelta(days=period_days - 1)
+                docs = db.skin_analyses.find({
+                    "user_id": user_query,
+                    "created_at": {"$gte": start_utc},
+                }, {"created_at": 1}).sort("created_at", 1)
+
+                local_days = []
+                for doc in docs:
+                    created_at = doc.get("created_at")
+                    if isinstance(created_at, datetime):
+                        day_utc = to_local_day(created_at)
+                        if not local_days or local_days[-1] != day_utc:
+                            local_days.append(day_utc)
+
+                # tz-aware today count
+                enriched_today = db.skin_analyses.count_documents({
+                    "user_id": user_query,
+                    "created_at": {"$gte": today_start_utc, "$lt": today_start_utc + timedelta(days=1)},
+                })
+
+                local_days_sorted = sorted(local_days, reverse=True)
+                expected = today_start_utc
+                tmp_streak = 0
+                for d in local_days_sorted:
+                    if d == expected:
+                        tmp_streak += 1
+                        expected = expected - timedelta(days=1)
+                    elif d < expected:
+                        break
+
+                if tmp_streak > 0:
+                    enriched_streak = tmp_streak
+            except Exception as _:
+                # On any failure, keep cached values
+                pass
+
         return {
             "total_photos": cached_total,
-            "streak_current": streak_cached,
-            "today_count": cached_today,
-            "source": "achievements_cache",
+            "streak_current": enriched_streak,
+            "today_count": enriched_today,
+            "source": "achievements_cache_enriched" if enriched_streak != streak_cached or enriched_today != cached_today else "achievements_cache",
         }
 
     # Fallback: compute from skin_analyses (source of truth)
