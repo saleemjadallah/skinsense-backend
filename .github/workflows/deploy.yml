@@ -201,14 +201,15 @@ jobs:
           echo "Removing old containers..."
           docker rm -f $(docker ps -aq --filter "name=skinsense") 2>/dev/null || true
           
-          # Clean up the network properly
-          echo "Cleaning up Docker networks..."
-          # Remove the default compose network
-          docker network rm skinsense_default 2>/dev/null || true
-          # Try to remove the skinsense_network
-          docker network rm skinsense_network 2>/dev/null || true
-          # Remove any network with skinsense in the name
-          docker network ls --format "{{.Name}}" | grep skinsense | xargs -r docker network rm 2>/dev/null || true
+          # Aggressive network cleanup
+          echo "Cleaning up ALL Docker networks..."
+          # Stop all containers first to free up networks
+          docker stop $(docker ps -q) 2>/dev/null || true
+          docker rm -f $(docker ps -aq) 2>/dev/null || true
+          # Remove ALL custom networks (keep only bridge, host, none)
+          docker network ls --format "{{.Name}}" | grep -v -E "^(bridge|host|none)$" | xargs -r docker network rm -f 2>/dev/null || true
+          # Final cleanup
+          docker network prune -f 2>/dev/null || true
           
           # Build and deploy
           echo "Building Docker images..."
@@ -237,14 +238,15 @@ jobs:
           echo "Removing old containers..."
           docker rm -f $(docker ps -aq --filter "name=skinsense") 2>/dev/null || true
           
-          # Clean up the network properly
-          echo "Cleaning up Docker networks..."
-          # Remove the default compose network
-          docker network rm skinsense_default 2>/dev/null || true
-          # Try to remove the skinsense_network
-          docker network rm skinsense_network 2>/dev/null || true
-          # Remove any network with skinsense in the name
-          docker network ls --format "{{.Name}}" | grep skinsense | xargs -r docker network rm 2>/dev/null || true
+          # Aggressive network cleanup
+          echo "Cleaning up ALL Docker networks..."
+          # Stop all containers first to free up networks
+          docker stop $(docker ps -q) 2>/dev/null || true
+          docker rm -f $(docker ps -aq) 2>/dev/null || true
+          # Remove ALL custom networks (keep only bridge, host, none)
+          docker network ls --format "{{.Name}}" | grep -v -E "^(bridge|host|none)$" | xargs -r docker network rm -f 2>/dev/null || true
+          # Final cleanup
+          docker network prune -f 2>/dev/null || true
           
           # Build and deploy
           echo "Building Docker images..."
