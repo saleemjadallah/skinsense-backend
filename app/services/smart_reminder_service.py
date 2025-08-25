@@ -33,11 +33,15 @@ class SmartReminderService:
         print("="*50)
         logger.info("[REMINDER SERVICE] Initializing SmartReminderService")
         try:
-            self.openai_client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
-            logger.info("[REMINDER SERVICE] OpenAI client initialized successfully")
+            if not settings.OPENAI_API_KEY:
+                logger.warning("[REMINDER SERVICE] OPENAI_API_KEY is missing; AI generation will use fallback")
+                self.openai_client = None
+            else:
+                self.openai_client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+                logger.info("[REMINDER SERVICE] OpenAI client initialized successfully")
         except Exception as e:
             logger.error(f"[REMINDER SERVICE] Failed to initialize OpenAI client: {str(e)}")
-            raise
+            self.openai_client = None
             
         # Access collections directly from the database object
         try:
@@ -136,7 +140,7 @@ class SmartReminderService:
         
         # Get user's latest skin analysis
         skin_analysis = self.db["skin_analyses"].find_one(
-            {"user_id": user_id},
+            {"$or": [{"user_id": user_id}, {"user_id": ObjectId(user_id) if len(user_id) == 24 else user_id}]},
             sort=[("created_at", -1)]
         )
         
@@ -144,9 +148,12 @@ class SmartReminderService:
         photo_stats = self._get_photo_tracking_stats(user_id)
         
         # Get active goals with detailed progress
-        active_goals = list(self.db["goals"].find(
-            {"user_id": user_id, "status": "active"}
-        ))
+        active_goals = list(self.db["goals"].find({
+            "$and": [
+                {"$or": [{"user_id": user_id}, {"user_id": ObjectId(user_id) if len(user_id) == 24 else user_id}]},
+                {"status": "active"}
+            ]
+        }))
         
         # Enhance goals with milestone detection
         enhanced_goals = []
@@ -218,7 +225,7 @@ class SmartReminderService:
         
         # Get usual photo times
         recent_analyses = list(self.db["skin_analyses"].find(
-            {"user_id": user_id},
+            {"$or": [{"user_id": user_id}, {"user_id": ObjectId(user_id) if len(user_id) == 24 else user_id}]},
             sort=[("created_at", -1)],
             limit=10
         ))
@@ -232,7 +239,7 @@ class SmartReminderService:
         
         # Check if today has photo
         today_photo = self.db["skin_analyses"].find_one({
-            "user_id": user_id,
+            "$or": [{"user_id": user_id}, {"user_id": ObjectId(user_id) if len(user_id) == 24 else user_id}],
             "created_at": {
                 "$gte": today_start,
                 "$lt": today_start + timedelta(days=1)
@@ -297,7 +304,7 @@ class SmartReminderService:
         # Get last 7 days of routine completions
         week_ago = datetime.utcnow() - timedelta(days=7)
         completions = list(self.db["routine_completions"].find({
-            "user_id": user_id,
+            "$or": [{"user_id": user_id}, {"user_id": ObjectId(user_id) if len(user_id) == 24 else user_id}],
             "completed_at": {"$gte": week_ago}
         }))
         
@@ -307,7 +314,7 @@ class SmartReminderService:
         
         # Get active routines
         active_routines = list(self.db["routines"].find({
-            "user_id": user_id,
+            "$or": [{"user_id": user_id}, {"user_id": ObjectId(user_id) if len(user_id) == 24 else user_id}],
             "is_active": True
         }))
         
@@ -570,6 +577,9 @@ class SmartReminderService:
         """
         
         try:
+            if not self.openai_client:
+                logger.warning("[REMINDER SERVICE] OpenAI client not available; using fallback reminders data")
+                return self._get_fallback_reminders_data()
             response = self.openai_client.chat.completions.create(
                 model="gpt-4-turbo-preview",
                 messages=[
@@ -956,8 +966,8 @@ class SmartReminderService:
     def _get_existing_reminders(self, user_id: str) -> List[Dict]:
         """Check for existing reminders for today that are still valid"""
         try:
-            # Get today's date range
-            today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            # Get today's date range in UTC
+            today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
             tomorrow = today + timedelta(days=1)
             
             print(f"[DEBUG] Searching for reminders between {today} and {tomorrow}")
@@ -965,7 +975,7 @@ class SmartReminderService:
             
             # Find reminders for today that are pending or scheduled for future
             query = {
-                "user_id": user_id,
+                "user_id": {"$in": [user_id, ObjectId(user_id) if len(user_id) == 24 else user_id]},
                 "scheduled_for": {
                     "$gte": today,
                     "$lt": tomorrow
@@ -975,6 +985,15 @@ class SmartReminderService:
             print(f"[DEBUG] Query: {query}")
             
             existing = list(self.db["smart_reminders"].find(query))
+            
+            # If none found, also consider upcoming within next 24h
+            if not existing:
+                query_next = {
+                    "user_id": {"$in": [user_id, ObjectId(user_id) if len(user_id) == 24 else user_id]},
+                    "scheduled_for": {"$gte": tomorrow, "$lt": tomorrow + timedelta(days=1)},
+                    "status": {"$in": ["pending", "snoozed"]}
+                }
+                existing = list(self.db["smart_reminders"].find(query_next))
             print(f"[DEBUG] Raw query result: {len(existing)} reminders")
             
             # Convert ObjectId to string for JSON serialization

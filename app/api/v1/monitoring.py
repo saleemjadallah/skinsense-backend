@@ -563,10 +563,24 @@ async def detailed_health_check(
         health_status["status"] = "degraded"
     
     # Check AI services
+    # Use actual settings attribute names (UPPERCASE) with graceful fallback
+    try:
+        openai_ok = bool(getattr(settings, "OPENAI_API_KEY", ""))
+    except Exception:
+        openai_ok = False
+    try:
+        orbo_ok = bool(getattr(settings, "ORBO_API_KEY", "") or getattr(settings, "ORBO_AI_API_KEY", ""))
+    except Exception:
+        orbo_ok = False
+    try:
+        perplexity_ok = bool(getattr(settings, "PERPLEXITY_API_KEY", ""))
+    except Exception:
+        perplexity_ok = False
+
     health_status["components"]["ai_services"] = {
-        "orbo": {"status": "healthy" if settings.orbo_ai_api_key else "not_configured"},
-        "openai": {"status": "healthy" if settings.openai_api_key else "not_configured"},
-        "perplexity": {"status": "healthy" if settings.perplexity_api_key else "not_configured"}
+        "orbo": {"status": "healthy" if orbo_ok else "not_configured"},
+        "openai": {"status": "healthy" if openai_ok else "not_configured"},
+        "perplexity": {"status": "healthy" if perplexity_ok else "not_configured"}
     }
     
     return health_status

@@ -120,11 +120,19 @@ async def get_smart_reminders(
         logger.info(f"[REMINDERS API] Getting existing reminders for today")
         reminders = reminder_service._get_existing_reminders(user_id)
         
-        # If no reminders exist for today, return empty list
-        # The cron job will generate them daily
+        # If no reminders exist for today, generate now (and record whether OpenAI was used)
         if not reminders:
-            logger.info(f"[REMINDERS API] No reminders found for today, returning empty list")
-            reminders = []
+            logger.info(f"[REMINDERS API] No reminders found for today, generating now")
+            try:
+                reminders = reminder_service.generate_personalized_reminders(
+                    user_id,
+                    {},
+                    include_calendar_sync=include_calendar
+                )
+                logger.info(f"[REMINDERS API] Generated {len(reminders)} reminders (openai_configured={bool(getattr(reminder_service, 'openai_client', None))})")
+            except Exception as gen_err:
+                logger.error(f"[REMINDERS API] Generation failed: {gen_err}. Falling back to basic reminders")
+                reminders = reminder_service._get_fallback_reminders(user_id)
         
         logger.info(f"[REMINDERS API] Received {len(reminders)} reminders from service")
         
