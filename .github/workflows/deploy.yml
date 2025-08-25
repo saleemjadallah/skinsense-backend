@@ -193,77 +193,131 @@ jobs:
         if command -v docker &> /dev/null && docker compose version &> /dev/null; then
           echo "Using Docker Compose v2 plugin..."
           
-          # First, stop any running containers
-          echo "Stopping any running containers..."
-          docker stop $(docker ps -q --filter "name=skinsense") 2>/dev/null || true
-          
-          # Remove all skinsense containers
-          echo "Removing old containers..."
-          docker rm -f $(docker ps -aq --filter "name=skinsense") 2>/dev/null || true
-          
-          # Aggressive network cleanup
-          echo "Cleaning up ALL Docker networks..."
-          # Stop all containers first to free up networks
-          docker stop $(docker ps -q) 2>/dev/null || true
+          # Nuclear option - clean EVERYTHING
+          echo "🔥 Nuclear cleanup - removing ALL Docker resources..."
+          docker stop $(docker ps -aq) 2>/dev/null || true
           docker rm -f $(docker ps -aq) 2>/dev/null || true
-          # Remove ALL custom networks (keep only bridge, host, none)
-          docker network ls --format "{{.Name}}" | grep -v -E "^(bridge|host|none)$" | xargs -r docker network rm -f 2>/dev/null || true
-          # Final cleanup
-          docker network prune -f 2>/dev/null || true
+          docker volume rm $(docker volume ls -q) 2>/dev/null || true
           
-          # Build and deploy
+          # List all networks for debugging
+          echo "Current networks before cleanup:"
+          docker network ls
+          
+          # Remove ALL non-default networks
+          for network in $(docker network ls --format "{{.Name}}"); do
+            if [[ "$network" != "bridge" && "$network" != "host" && "$network" != "none" ]]; then
+              echo "Removing network: $network"
+              docker network rm -f "$network" 2>/dev/null || true
+            fi
+          done
+          
+          # System prune to clean everything
+          docker system prune -af --volumes 2>/dev/null || true
+          
+          echo "Networks after cleanup:"
+          docker network ls
+          
+          # Build images first
           echo "Building Docker images..."
-          docker compose build --no-cache
+          docker build -t skinsense_api:latest -f Dockerfile .
+          docker pull redis:7-alpine
           
-          echo "Starting services..."
-          docker compose up -d --force-recreate --remove-orphans
+          # Start services using docker run instead of compose
+          echo "Starting services with docker run..."
+          
+          # Start Redis
+          docker run -d \
+            --name skinsense_redis \
+            -p 6379:6379 \
+            --restart unless-stopped \
+            redis:7-alpine
+          
+          # Start API
+          docker run -d \
+            --name skinsense_api \
+            -p 8000:8000 \
+            --env-file .env \
+            -e REDIS_URL=redis://$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' skinsense_redis):6379 \
+            -e ENVIRONMENT=production \
+            -e DEBUG=false \
+            --restart unless-stopped \
+            skinsense_api:latest \
+            uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
           
           # Wait for services to start
           echo "Waiting for services to start..."
           sleep 15
           
           echo "Checking container status..."
-          docker compose ps
+          docker ps
           
           echo "Fetching logs..."
-          docker compose logs --tail=50
+          docker logs skinsense_api --tail=50
+          docker logs skinsense_redis --tail=20
         else
-          echo "Using standalone docker-compose..."
+          echo "Using standalone docker-compose (fallback to docker run)..."
           
-          # First, stop any running containers
-          echo "Stopping any running containers..."
-          docker stop $(docker ps -q --filter "name=skinsense") 2>/dev/null || true
-          
-          # Remove all skinsense containers
-          echo "Removing old containers..."
-          docker rm -f $(docker ps -aq --filter "name=skinsense") 2>/dev/null || true
-          
-          # Aggressive network cleanup
-          echo "Cleaning up ALL Docker networks..."
-          # Stop all containers first to free up networks
-          docker stop $(docker ps -q) 2>/dev/null || true
+          # Nuclear option - clean EVERYTHING
+          echo "🔥 Nuclear cleanup - removing ALL Docker resources..."
+          docker stop $(docker ps -aq) 2>/dev/null || true
           docker rm -f $(docker ps -aq) 2>/dev/null || true
-          # Remove ALL custom networks (keep only bridge, host, none)
-          docker network ls --format "{{.Name}}" | grep -v -E "^(bridge|host|none)$" | xargs -r docker network rm -f 2>/dev/null || true
-          # Final cleanup
-          docker network prune -f 2>/dev/null || true
+          docker volume rm $(docker volume ls -q) 2>/dev/null || true
           
-          # Build and deploy
+          # List all networks for debugging
+          echo "Current networks before cleanup:"
+          docker network ls
+          
+          # Remove ALL non-default networks
+          for network in $(docker network ls --format "{{.Name}}"); do
+            if [[ "$network" != "bridge" && "$network" != "host" && "$network" != "none" ]]; then
+              echo "Removing network: $network"
+              docker network rm -f "$network" 2>/dev/null || true
+            fi
+          done
+          
+          # System prune to clean everything
+          docker system prune -af --volumes 2>/dev/null || true
+          
+          echo "Networks after cleanup:"
+          docker network ls
+          
+          # Build images first
           echo "Building Docker images..."
-          docker-compose build --no-cache
+          docker build -t skinsense_api:latest -f Dockerfile .
+          docker pull redis:7-alpine
           
-          echo "Starting services..."
-          docker-compose up -d --force-recreate --remove-orphans
+          # Start services using docker run instead of compose
+          echo "Starting services with docker run..."
+          
+          # Start Redis
+          docker run -d \
+            --name skinsense_redis \
+            -p 6379:6379 \
+            --restart unless-stopped \
+            redis:7-alpine
+          
+          # Start API
+          docker run -d \
+            --name skinsense_api \
+            -p 8000:8000 \
+            --env-file .env \
+            -e REDIS_URL=redis://$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' skinsense_redis):6379 \
+            -e ENVIRONMENT=production \
+            -e DEBUG=false \
+            --restart unless-stopped \
+            skinsense_api:latest \
+            uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
           
           # Wait for services to start
           echo "Waiting for services to start..."
           sleep 15
           
           echo "Checking container status..."
-          docker-compose ps
+          docker ps
           
           echo "Fetching logs..."
-          docker-compose logs --tail=50
+          docker logs skinsense_api --tail=50
+          docker logs skinsense_redis --tail=20
         fi
         
         echo "✅ Docker Compose deployment completed!"
