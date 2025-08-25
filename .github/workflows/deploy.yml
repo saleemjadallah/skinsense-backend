@@ -192,32 +192,60 @@ jobs:
         # Use the new docker compose command (without hyphen) if available
         if command -v docker &> /dev/null && docker compose version &> /dev/null; then
           echo "Using Docker Compose v2 plugin..."
-          # Remove any existing containers first
-          docker compose down --volumes --remove-orphans 2>/dev/null || true
           
-          # One more network cleanup specifically for compose networks
-          docker network ls --format "{{.Name}}" | grep -E "skinsense_network" | xargs -r docker network rm -f 2>/dev/null || true
+          # Stop and remove everything related to this project
+          docker compose -p skinsense down --volumes --remove-orphans 2>/dev/null || true
           
-          # Build and deploy
-          docker compose build --no-cache
-          docker compose up -d --force-recreate --remove-orphans --renew-anon-volumes
-          sleep 10
-          docker compose ps
-          docker compose logs --tail=50
+          # Force remove the specific network if it exists
+          docker network rm skinsense_network 2>/dev/null || true
+          
+          # Clean up any orphaned containers
+          docker ps -a --format "{{.Names}}" | grep -E "skinsense" | xargs -r docker rm -f 2>/dev/null || true
+          
+          # Build and deploy with project name to avoid conflicts
+          echo "Building Docker images..."
+          docker compose -p skinsense build --no-cache
+          
+          echo "Starting services..."
+          docker compose -p skinsense up -d --force-recreate --remove-orphans
+          
+          # Wait for services to start
+          echo "Waiting for services to start..."
+          sleep 15
+          
+          echo "Checking container status..."
+          docker compose -p skinsense ps
+          
+          echo "Fetching logs..."
+          docker compose -p skinsense logs --tail=50
         else
           echo "Using standalone docker-compose..."
-          # Remove any existing containers first
-          docker-compose down --volumes --remove-orphans 2>/dev/null || true
           
-          # One more network cleanup specifically for compose networks
-          docker network ls --format "{{.Name}}" | grep -E "skinsense_network" | xargs -r docker network rm -f 2>/dev/null || true
+          # Stop and remove everything related to this project
+          docker-compose -p skinsense down --volumes --remove-orphans 2>/dev/null || true
           
-          # Build and deploy
-          docker-compose build --no-cache
-          docker-compose up -d --force-recreate --remove-orphans --renew-anon-volumes
-          sleep 10
-          docker-compose ps
-          docker-compose logs --tail=50
+          # Force remove the specific network if it exists
+          docker network rm skinsense_network 2>/dev/null || true
+          
+          # Clean up any orphaned containers
+          docker ps -a --format "{{.Names}}" | grep -E "skinsense" | xargs -r docker rm -f 2>/dev/null || true
+          
+          # Build and deploy with project name to avoid conflicts
+          echo "Building Docker images..."
+          docker-compose -p skinsense build --no-cache
+          
+          echo "Starting services..."
+          docker-compose -p skinsense up -d --force-recreate --remove-orphans
+          
+          # Wait for services to start
+          echo "Waiting for services to start..."
+          sleep 15
+          
+          echo "Checking container status..."
+          docker-compose -p skinsense ps
+          
+          echo "Fetching logs..."
+          docker-compose -p skinsense logs --tail=50
         fi
         
         echo "✅ Docker Compose deployment completed!"
@@ -225,19 +253,46 @@ jobs:
         # Health check
         echo "🏥 Running health check..."
         sleep 5
-        if curl -f http://localhost:8000/health; then
-          echo "✅ Health check passed!"
+        
+        # Show current container status
+        echo "Current container status:"
+        docker ps -a
+        
+        # Try health check multiple times
+        HEALTH_CHECK_ATTEMPTS=3
+        HEALTH_CHECK_PASSED=false
+        
+        for i in $(seq 1 $HEALTH_CHECK_ATTEMPTS); do
+          echo "Health check attempt $i of $HEALTH_CHECK_ATTEMPTS..."
+          if curl -f http://localhost:8000/health 2>/dev/null; then
+            HEALTH_CHECK_PASSED=true
+            echo "✅ Health check passed!"
+            break
+          else
+            echo "Health check attempt $i failed, waiting 10 seconds..."
+            sleep 10
+          fi
+        done
+        
+        if [ "$HEALTH_CHECK_PASSED" = true ]; then
           echo "🎉 Deployment successful!"
           echo "📊 Service status:"
           docker ps
         else
-          echo "❌ Health check failed. Checking logs..."
+          echo "❌ Health check failed after $HEALTH_CHECK_ATTEMPTS attempts."
+          echo "Container status:"
           docker ps -a
+          echo ""
+          echo "Detailed logs:"
           if command -v docker &> /dev/null && docker compose version &> /dev/null; then
-            docker compose logs --tail=100
+            docker compose -p skinsense logs --tail=200
           else
-            docker-compose logs --tail=100
+            docker-compose -p skinsense logs --tail=200
           fi
+          echo ""
+          echo "Checking specific container logs:"
+          docker logs skinsense_api --tail=100 2>&1 || echo "Could not get API container logs"
+          docker logs skinsense_redis --tail=50 2>&1 || echo "Could not get Redis container logs"
           exit 1
         fi
         ENDSSH
