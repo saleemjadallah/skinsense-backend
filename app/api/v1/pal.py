@@ -6,11 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
 from datetime import datetime
-
-from app.models.user import UserModel
-from app.api.deps import get_current_active_user
-from app.services.pal_service import pal_service
 import logging
+
+from ..deps import get_current_active_user
+from ...models.user import UserModel
+from ...services.pal_service import PalService
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,9 @@ async def chat_with_pal(
     try:
         logger.info(f"User {current_user.id} sending message to Pal")
         
+        # Initialize service
+        pal_service = PalService()
+        
         # Process message with Pal (synchronous call)
         result = pal_service.chat_with_pal(
             user_id=str(current_user.id),
@@ -60,8 +63,13 @@ async def chat_with_pal(
         
         return ChatResponse(**result)
         
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
     except Exception as e:
-        logger.error(f"Error in Pal chat: {e}")
+        logger.error(f"Error in Pal chat: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Pal is taking a quick break. Please try again!"
@@ -81,6 +89,9 @@ async def get_chat_history(
         limit: Maximum number of messages to return (default 50)
     """
     try:
+        # Initialize service
+        pal_service = PalService()
+        
         if session_id:
             # Get specific session history (synchronous call)
             history = pal_service._get_session_history(session_id)
@@ -94,7 +105,7 @@ async def get_chat_history(
         else:
             # Get all user's recent chats (synchronous)
             history = list(pal_service.chat_collection.find(
-                {"user_id": current_user.id}
+                {"user_id": str(current_user.id)}
             ).sort("timestamp", -1).limit(limit))
         
         # Format history for response
@@ -115,7 +126,7 @@ async def get_chat_history(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting chat history: {e}")
+        logger.error(f"Error getting chat history: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not retrieve chat history"
@@ -133,6 +144,9 @@ async def clear_chat_history(
         session_id: Optional specific session to clear (if not provided, clears all)
     """
     try:
+        # Initialize service
+        pal_service = PalService()
+        
         success = pal_service.clear_chat_history(
             user_id=str(current_user.id),
             session_id=session_id
@@ -152,7 +166,7 @@ async def clear_chat_history(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error clearing chat history: {e}")
+        logger.error(f"Error clearing chat history: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not clear chat history"
@@ -166,6 +180,9 @@ async def get_conversation_starters(
     Get personalized conversation starters based on user's profile and recent activity
     """
     try:
+        # Initialize service
+        pal_service = PalService()
+        
         starters = pal_service.get_conversation_starters(
             user_id=str(current_user.id)
         )
@@ -173,7 +190,7 @@ async def get_conversation_starters(
         return [ConversationStarter(**starter) for starter in starters]
         
     except Exception as e:
-        logger.error(f"Error getting conversation starters: {e}")
+        logger.error(f"Error getting conversation starters: {str(e)}")
         # Return default starters on error
         return [
             ConversationStarter(text="How can I improve my skin?", icon="💧"),
@@ -198,11 +215,14 @@ async def submit_chat_feedback(
         helpful: Whether the response was helpful
     """
     try:
+        # Initialize service
+        pal_service = PalService()
+        
         # Update the specific chat message with feedback (synchronous)
         result = pal_service.chat_collection.update_one(
             {
                 "session_id": session_id,
-                "user_id": current_user.id
+                "user_id": str(current_user.id)
             },
             {
                 "$set": {
@@ -223,61 +243,8 @@ async def submit_chat_feedback(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error submitting feedback: {e}")
+        logger.error(f"Error submitting feedback: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not submit feedback"
         )
-
-@router.get("/stats")
-async def get_pal_stats(
-    current_user: UserModel = Depends(get_current_active_user)
-) -> Dict[str, Any]:
-    """
-    Get user's Pal interaction statistics
-    """
-    try:
-        # Get total message count (synchronous)
-        total_messages = pal_service.chat_collection.count_documents(
-            {"user_id": current_user.id}
-        )
-        
-        # Get session count
-        total_sessions = pal_service.session_collection.count_documents(
-            {"user_id": current_user.id}
-        )
-        
-        # Get helpful feedback stats
-        helpful_count = pal_service.chat_collection.count_documents(
-            {"user_id": current_user.id, "helpful": True}
-        )
-        
-        not_helpful_count = pal_service.chat_collection.count_documents(
-            {"user_id": current_user.id, "helpful": False}
-        )
-        
-        # Get most recent session
-        recent_session = pal_service.session_collection.find_one(
-            {"user_id": current_user.id},
-            sort=[("last_activity", -1)]
-        )
-        
-        return {
-            "total_messages": total_messages,
-            "total_sessions": total_sessions,
-            "helpful_responses": helpful_count,
-            "not_helpful_responses": not_helpful_count,
-            "satisfaction_rate": (helpful_count / (helpful_count + not_helpful_count) * 100) if (helpful_count + not_helpful_count) > 0 else 0,
-            "last_chat": recent_session.get("last_activity").isoformat() if recent_session and recent_session.get("last_activity") else None
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting Pal stats: {e}")
-        return {
-            "total_messages": 0,
-            "total_sessions": 0,
-            "helpful_responses": 0,
-            "not_helpful_responses": 0,
-            "satisfaction_rate": 0,
-            "last_chat": None
-        }

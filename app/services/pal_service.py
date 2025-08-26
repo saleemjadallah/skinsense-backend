@@ -8,10 +8,10 @@ from typing import Dict, Any, List, Optional
 import json
 import logging
 from datetime import datetime, timedelta
-from app.core.config import settings
-from app.core.monitoring import track_ai_service, ai_service_tokens
-from app.database import db
-from app.models.user import UserModel
+from ..core.config import settings
+from ..core.monitoring import track_ai_service, ai_service_tokens
+from ..database import get_database
+from ..models.user import UserModel
 from bson import ObjectId
 
 logger = logging.getLogger(__name__)
@@ -109,16 +109,17 @@ class PalService:
     """
     
     def __init__(self):
+        self.db = get_database()  # Initialize database immediately
         try:
             self.client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
-            self.chat_collection = db.pal_chats
-            self.session_collection = db.pal_sessions
         except Exception as e:
-            logger.error(f"Error initializing PalService: {e}")
+            logger.error(f"Error initializing OpenAI client: {e}")
             # Still allow service to initialize even if OpenAI fails
             self.client = None
-            self.chat_collection = db.pal_chats
-            self.session_collection = db.pal_sessions
+        
+        # Get collections from database
+        self.chat_collection = self.db.pal_chats
+        self.session_collection = self.db.pal_sessions
         
     @track_ai_service("openai", "pal_chat")
     def chat_with_pal(
@@ -296,7 +297,7 @@ class PalService:
             }
             
             # Get latest skin analysis
-            analysis_collection = db.skin_analyses
+            analysis_collection = self.db.skin_analyses
             latest_analysis = analysis_collection.find_one(
                 {"user_id": ObjectId(user_id)},
                 sort=[("created_at", -1)]
@@ -316,7 +317,7 @@ class PalService:
                 }
             
             # Get streak data
-            routine_collection = db.routine_completions
+            routine_collection = self.db.routine_completions
             today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
             recent_completions = routine_collection.count_documents({
                 "user_id": ObjectId(user_id),
@@ -325,7 +326,7 @@ class PalService:
             context["streak"] = recent_completions
             
             # Get active goals
-            goals_collection = db.goals
+            goals_collection = self.db.goals
             active_goals = list(goals_collection.find(
                 {"user_id": ObjectId(user_id), "status": "active"}
             ).limit(3))
@@ -562,5 +563,5 @@ class PalService:
             logger.error(f"Error clearing chat history: {e}")
             return False
 
-# Global instance
-pal_service = PalService()
+# Service is instantiated in each endpoint to ensure proper database connection
+# No global instance needed - follows the pattern of other services like GoalService
