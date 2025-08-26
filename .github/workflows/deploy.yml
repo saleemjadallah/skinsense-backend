@@ -341,6 +341,40 @@ jobs:
         PROJECT_NAME="skinsense-backend"
         echo "Using project name: $PROJECT_NAME"
         
+        # COMPREHENSIVE NETWORK CLEANUP before any docker-compose operations
+        echo "=== COMPREHENSIVE NETWORK CLEANUP ==="
+        
+        # Stop ALL containers to release network connections
+        echo "Stopping all Docker containers to free networks..."
+        docker stop $(docker ps -q) 2>/dev/null || true
+        sleep 2
+        
+        # List all networks before cleanup for debugging
+        echo "Networks before cleanup:"
+        docker network ls
+        
+        # Remove project-specific networks with multiple methods
+        echo "Removing any existing project networks..."
+        docker network rm ${PROJECT_NAME}_app_network 2>/dev/null || true
+        docker network rm ${PROJECT_NAME}_default 2>/dev/null || true
+        docker network rm app_network 2>/dev/null || true
+        
+        # Remove ALL networks containing our project name
+        docker network ls --format "{{.Name}}" | grep -i "${PROJECT_NAME}" | xargs -r docker network rm -f 2>/dev/null || true
+        
+        # Remove all user-defined networks (keep only bridge, host, none)
+        docker network ls --format "{{.Name}}" | grep -vE "^(bridge|host|none)$" | xargs -r docker network rm -f 2>/dev/null || true
+        
+        # Force prune to clean up any remaining networks
+        docker network prune -f 2>/dev/null || true
+        
+        # List networks after cleanup
+        echo "Networks after cleanup:"
+        docker network ls
+        
+        # Small delay to ensure network cleanup is complete
+        sleep 3
+        
         # Build with explicit project name
         docker-compose -p $PROJECT_NAME build --no-cache
         
