@@ -127,14 +127,14 @@ async def create_skin_analysis(
         analysis_id = result.inserted_id
         
         # Update achievements cache for streak tracking
-        day_start = get_utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
+        day_start = get_utc_now().replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
         db.achievements.update_one(
             {"user_id": ObjectId(str(current_user.id)), "date": day_start},
             {
-                "$setOnInsert": {"created_at": get_utc_now()},
+                "$setOnInsert": {"created_at": get_utc_now().replace(tzinfo=None)},
                 "$inc": {"photos_taken": 1},
                 "$addToSet": {"analysis_ids": str(analysis_id)},
-                "$set": {"updated_at": get_utc_now()}
+                "$set": {"updated_at": get_utc_now().replace(tzinfo=None)}
             },
             upsert=True
         )
@@ -479,14 +479,14 @@ async def complete_ai_pipeline(
         analysis_id = result.inserted_id
         
         # Update achievements cache for streak tracking
-        day_start = get_utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
+        day_start = get_utc_now().replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
         db.achievements.update_one(
             {"user_id": ObjectId(str(current_user.id)), "date": day_start},
             {
-                "$setOnInsert": {"created_at": get_utc_now()},
+                "$setOnInsert": {"created_at": get_utc_now().replace(tzinfo=None)},
                 "$inc": {"photos_taken": 1},
                 "$addToSet": {"analysis_ids": str(analysis_id)},
-                "$set": {"updated_at": get_utc_now()}
+                "$set": {"updated_at": get_utc_now().replace(tzinfo=None)}
             },
             upsert=True
         )
@@ -724,11 +724,11 @@ async def save_orbo_sdk_result(
             db.achievements.create_index([("user_id", 1), ("date", 1)], unique=True)
         except Exception:
             pass
-        day_start = get_utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
+        day_start = get_utc_now().replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
         db.achievements.update_one(
             {"user_id": ObjectId(str(current_user.id)), "date": day_start},
             {
-                "$setOnInsert": {"created_at": get_utc_now()},
+                "$setOnInsert": {"created_at": get_utc_now().replace(tzinfo=None)},
                 "$inc": {"photos_taken": 1},
                 "$addToSet": {"analysis_ids": analysis_id},
             },
@@ -1167,9 +1167,10 @@ async def achievements_summary(
     # Today start (UTC) corresponding to local midnight
     now_utc = get_utc_now()
     # For achievements cache, use plain UTC midnight (same as how we save)
-    today_start_utc_plain = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+    # MongoDB expects timezone-naive datetimes, so remove timezone info
+    today_start_utc_plain = now_utc.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
     # For skin_analyses fallback, use timezone-adjusted
-    today_start_utc = to_local_day(now_utc)
+    today_start_utc = to_local_day(now_utc.replace(tzinfo=None))
 
     # Fast path: achievements cache (use plain UTC to match how we save)
     today_doc = db.achievements.find_one({"user_id": user_oid, "date": today_start_utc_plain}) or {}
@@ -1743,7 +1744,7 @@ async def populate_sample_data(
                 {
                     "$inc": {"photos_taken": 1},
                     "$set": {
-                        "updated_at": get_utc_now(),
+                        "updated_at": get_utc_now().replace(tzinfo=None),
                         "last_analysis_id": str(analysis.get("_id", ""))
                     }
                 },
@@ -1751,7 +1752,7 @@ async def populate_sample_data(
             )
     
     # Calculate current streak for verification
-    today_start = get_utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = get_utc_now().replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
     cursor = db.achievements.find(
         {"user_id": user_oid, "photos_taken": {"$gt": 0}}
     ).sort("date", -1)

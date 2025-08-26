@@ -13,3 +13,6 @@
 
 # Health check for insights generation (every 12 hours)
 0 */12 * * * cd /app && /usr/bin/python3 -c "from app.database import db; from datetime import datetime; count = db.daily_insights.count_documents({'created_at': {'$gte': datetime.utcnow().replace(hour=0, minute=0, second=0)}}); print(f'Generated insights today: {count}')" >> /var/log/skinsense/health_check.log 2>&1
+
+# Generate smart reminders daily at 10:00 UTC for active users
+0 10 * * * cd /app && /usr/bin/python3 app/scripts/generate_daily_reminders.py >> /var/log/skinsense/reminders_cron.log 2>&1

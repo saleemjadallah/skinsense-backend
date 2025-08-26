@@ -23,6 +23,24 @@ from app.schemas.reminder import (
 from app.services.weather_service import WeatherService
 
 router = APIRouter()
+@router.post("/generate/today")
+async def force_generate_today(
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Force-generate today's smart reminders for the current user (admin/test use)
+    """
+    try:
+        user_id = get_user_id(current_user)
+        reminder_service = get_reminder_service()
+        reminders = reminder_service.generate_personalized_reminders(
+            user_id,
+            {},
+            include_calendar_sync=True
+        )
+        return {"generated": len(reminders), "openai_configured": bool(getattr(reminder_service, 'openai_client', None))}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 def get_user_id(current_user) -> str:
     """Extract user ID from current_user object"""
