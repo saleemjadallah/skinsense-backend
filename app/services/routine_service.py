@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
 from bson import ObjectId
 from pymongo.database import Database
+from app.utils.date_utils import get_utc_now
 
 from app.models.routine import (
     RoutineModel, RoutineStep, RoutineProduct, 
@@ -456,7 +457,7 @@ class RoutineService:
         last_completed = routine.get("last_completed")
         
         # Calculate streak
-        now = datetime.utcnow()
+        now = get_utc_now()
         if last_completed:
             days_since_last = (now - last_completed).days
             if days_since_last <= 1:
@@ -491,7 +492,7 @@ class RoutineService:
     ) -> Dict[str, Any]:
         """Get insights about routine effectiveness"""
         
-        since_date = datetime.utcnow() - timedelta(days=days)
+        since_date = get_utc_now() - timedelta(days=days)
         
         # Get completions
         completions = list(db.routine_completions.find({
