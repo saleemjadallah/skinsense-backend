@@ -212,24 +212,53 @@ jobs:
         echo "Freeing up ports 6379 and 8000..."
         
         # Check what's using the ports
-        echo "Checking port usage..."
-        sudo lsof -i :6379 2>/dev/null || true
-        sudo lsof -i :8000 2>/dev/null || true
+        echo "Checking port usage before cleanup..."
+        sudo netstat -tlnp | grep -E ':6379|:8000' || true
         
-        # Kill any system Redis that might be running
+        # AGGRESSIVE PORT CLEANUP
+        echo "Killing any process using port 6379..."
+        
+        # Method 1: Find and kill by port using lsof
+        sudo lsof -ti:6379 | xargs -r sudo kill -9 2>/dev/null || true
+        sudo lsof -ti:8000 | xargs -r sudo kill -9 2>/dev/null || true
+        
+        # Method 2: Find and kill by port using fuser
+        sudo fuser -k 6379/tcp 2>/dev/null || true
+        sudo fuser -k 8000/tcp 2>/dev/null || true
+        
+        # Method 3: Kill any Redis process
+        sudo pkill -9 -f redis 2>/dev/null || true
+        sudo killall -9 redis-server 2>/dev/null || true
+        
+        # Method 4: Stop system Redis services
         sudo systemctl stop redis-server 2>/dev/null || true
         sudo systemctl stop redis 2>/dev/null || true
-        sudo pkill -f redis-server 2>/dev/null || true
+        sudo systemctl disable redis-server 2>/dev/null || true
+        sudo systemctl disable redis 2>/dev/null || true
         
-        # Find and stop Docker containers using these ports
-        for port in 6379 8000; do
-          CONTAINER_ID=$(docker ps -q --filter "publish=$port")
-          if [ ! -z "$CONTAINER_ID" ]; then
-            echo "Stopping container using port $port: $CONTAINER_ID"
-            docker stop $CONTAINER_ID 2>/dev/null || true
-            docker rm -f $CONTAINER_ID 2>/dev/null || true
-          fi
-        done
+        # Method 5: Find and stop ALL Docker containers (nuclear option)
+        echo "Stopping ALL Docker containers..."
+        docker stop $(docker ps -aq) 2>/dev/null || true
+        docker rm -f $(docker ps -aq) 2>/dev/null || true
+        
+        # Wait a moment for ports to be released
+        sleep 3
+        
+        # Verify ports are free
+        echo "Checking port usage after cleanup..."
+        if sudo lsof -i:6379 2>/dev/null | grep -q LISTEN; then
+          echo "WARNING: Port 6379 is still in use after cleanup!"
+          sudo lsof -i:6379
+        else
+          echo "✅ Port 6379 is free"
+        fi
+        
+        if sudo lsof -i:8000 2>/dev/null | grep -q LISTEN; then
+          echo "WARNING: Port 8000 is still in use after cleanup!"
+          sudo lsof -i:8000
+        else
+          echo "✅ Port 8000 is free"
+        fi
         
         # Remove specific named containers that might exist
         echo "Removing any existing skinsense containers..."
@@ -349,8 +378,8 @@ jobs:
         for i in $(seq 1 $HEALTH_CHECK_ATTEMPTS); do
           echo "Health check attempt $i of $HEALTH_CHECK_ATTEMPTS..."
           
-          # Try to curl the health endpoint
-          HEALTH_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health 2>/dev/null || echo "000")
+          # Try to curl the health endpoint (using port 8001 now)
+          HEALTH_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8001/health 2>/dev/null || echo "000")
           
           if [ "$HEALTH_RESPONSE" = "200" ] || [ "$HEALTH_RESPONSE" = "503" ]; then
             echo "✅ API is responding (HTTP $HEALTH_RESPONSE)!"
@@ -358,7 +387,7 @@ jobs:
             
             # Show the actual health response
             echo "Health endpoint response:"
-            curl -s http://localhost:8000/health | python3 -m json.tool 2>/dev/null || curl -s http://localhost:8000/health
+            curl -s http://localhost:8001/health | python3 -m json.tool 2>/dev/null || curl -s http://localhost:8001/health
             break
           else
             echo "Health check attempt $i failed (HTTP $HEALTH_RESPONSE), waiting 10 seconds..."
@@ -384,9 +413,13 @@ jobs:
           echo ""
           echo "📌 Deployment Information:"
           echo "   Project: $PROJECT_NAME"
-          echo "   API URL: http://${{ secrets.EC2_HOST }}:8000"
-          echo "   Health: http://${{ secrets.EC2_HOST }}:8000/health"
-          echo "   Docs: http://${{ secrets.EC2_HOST }}:8000/docs"
+          echo "   API URL: http://${{ secrets.EC2_HOST }}:8001"
+          echo "   Health: http://${{ secrets.EC2_HOST }}:8001/health"
+          echo "   Docs: http://${{ secrets.EC2_HOST }}:8001/docs"
+          echo ""
+          echo "   Note: Ports have been changed to avoid conflicts:"
+          echo "   - API: 8001 (instead of 8000)"
+          echo "   - Redis: 6380 (instead of 6379)"
         else
           echo "❌ Health check failed after $HEALTH_CHECK_ATTEMPTS attempts."
           echo ""
