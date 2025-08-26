@@ -51,8 +51,8 @@ async def chat_with_pal(
     try:
         logger.info(f"User {current_user.id} sending message to Pal")
         
-        # Process message with Pal
-        result = await pal_service.chat_with_pal(
+        # Process message with Pal (synchronous call)
+        result = pal_service.chat_with_pal(
             user_id=str(current_user.id),
             message=message.message,
             session_id=message.session_id
@@ -82,8 +82,8 @@ async def get_chat_history(
     """
     try:
         if session_id:
-            # Get specific session history
-            history = await pal_service._get_session_history(session_id)
+            # Get specific session history (synchronous call)
+            history = pal_service._get_session_history(session_id)
             
             # Verify user owns this session
             if history and str(history[0].get("user_id")) != str(current_user.id):
@@ -92,10 +92,10 @@ async def get_chat_history(
                     detail="You don't have access to this session"
                 )
         else:
-            # Get all user's recent chats
-            history = await pal_service.chat_collection.find(
+            # Get all user's recent chats (synchronous)
+            history = list(pal_service.chat_collection.find(
                 {"user_id": current_user.id}
-            ).sort("timestamp", -1).limit(limit).to_list(length=limit)
+            ).sort("timestamp", -1).limit(limit))
         
         # Format history for response
         formatted_history = []
@@ -133,7 +133,7 @@ async def clear_chat_history(
         session_id: Optional specific session to clear (if not provided, clears all)
     """
     try:
-        success = await pal_service.clear_chat_history(
+        success = pal_service.clear_chat_history(
             user_id=str(current_user.id),
             session_id=session_id
         )
@@ -166,7 +166,7 @@ async def get_conversation_starters(
     Get personalized conversation starters based on user's profile and recent activity
     """
     try:
-        starters = await pal_service.get_conversation_starters(
+        starters = pal_service.get_conversation_starters(
             user_id=str(current_user.id)
         )
         
@@ -198,8 +198,8 @@ async def submit_chat_feedback(
         helpful: Whether the response was helpful
     """
     try:
-        # Update the specific chat message with feedback
-        result = await pal_service.chat_collection.update_one(
+        # Update the specific chat message with feedback (synchronous)
+        result = pal_service.chat_collection.update_one(
             {
                 "session_id": session_id,
                 "user_id": current_user.id
@@ -237,27 +237,27 @@ async def get_pal_stats(
     Get user's Pal interaction statistics
     """
     try:
-        # Get total message count
-        total_messages = await pal_service.chat_collection.count_documents(
+        # Get total message count (synchronous)
+        total_messages = pal_service.chat_collection.count_documents(
             {"user_id": current_user.id}
         )
         
         # Get session count
-        total_sessions = await pal_service.session_collection.count_documents(
+        total_sessions = pal_service.session_collection.count_documents(
             {"user_id": current_user.id}
         )
         
         # Get helpful feedback stats
-        helpful_count = await pal_service.chat_collection.count_documents(
+        helpful_count = pal_service.chat_collection.count_documents(
             {"user_id": current_user.id, "helpful": True}
         )
         
-        not_helpful_count = await pal_service.chat_collection.count_documents(
+        not_helpful_count = pal_service.chat_collection.count_documents(
             {"user_id": current_user.id, "helpful": False}
         )
         
         # Get most recent session
-        recent_session = await pal_service.session_collection.find_one(
+        recent_session = pal_service.session_collection.find_one(
             {"user_id": current_user.id},
             sort=[("last_activity", -1)]
         )

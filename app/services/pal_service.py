@@ -114,7 +114,7 @@ class PalService:
         self.session_collection = db.pal_sessions
         
     @track_ai_service("openai", "pal_chat")
-    async def chat_with_pal(
+    def chat_with_pal(
         self,
         user_id: str,
         message: str,
@@ -133,16 +133,16 @@ class PalService:
         """
         try:
             # Get user context
-            user_context = await self._get_user_context(user_id)
+            user_context = self._get_user_context(user_id)
             
             # Get conversation history if session exists
             conversation_history = []
             if session_id:
-                conversation_history = await self._get_session_history(session_id)
+                conversation_history = self._get_session_history(session_id)
             else:
                 # Create new session
                 session_id = str(ObjectId())
-                await self._create_session(user_id, session_id)
+                self._create_session(user_id, session_id)
             
             # Build messages for GPT-5
             messages = self._build_messages(
@@ -175,7 +175,7 @@ class PalService:
             pal_response = response.choices[0].message.content
             
             # Save chat to history
-            await self._save_chat_message(
+            self._save_chat_message(
                 user_id=user_id,
                 session_id=session_id,
                 user_message=message,
@@ -265,12 +265,12 @@ class PalService:
         
         return "\n".join(context_parts)
     
-    async def _get_user_context(self, user_id: str) -> Dict[str, Any]:
+    def _get_user_context(self, user_id: str) -> Dict[str, Any]:
         """
         Gather user context for personalized responses
         """
         try:
-            user = await UserModel.get_by_id(user_id)
+            user = UserModel.get_by_id(user_id)
             if not user:
                 return {}
             
@@ -285,7 +285,7 @@ class PalService:
             
             # Get latest skin analysis
             analysis_collection = db.skin_analyses
-            latest_analysis = await analysis_collection.find_one(
+            latest_analysis = analysis_collection.find_one(
                 {"user_id": ObjectId(user_id)},
                 sort=[("created_at", -1)]
             )
@@ -306,7 +306,7 @@ class PalService:
             # Get streak data
             routine_collection = db.routine_completions
             today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-            recent_completions = await routine_collection.count_documents({
+            recent_completions = routine_collection.count_documents({
                 "user_id": ObjectId(user_id),
                 "completed_at": {"$gte": today - timedelta(days=7)}
             })
@@ -314,9 +314,9 @@ class PalService:
             
             # Get active goals
             goals_collection = db.goals
-            active_goals = await goals_collection.find(
+            active_goals = list(goals_collection.find(
                 {"user_id": ObjectId(user_id), "status": "active"}
-            ).limit(3).to_list(length=3)
+            ).limit(3))
             
             if active_goals:
                 context["goals"] = [
@@ -330,7 +330,7 @@ class PalService:
             logger.error(f"Error getting user context: {e}")
             return {}
     
-    async def _get_session_history(
+    def _get_session_history(
         self, 
         session_id: str
     ) -> List[Dict[str, Any]]:
@@ -338,9 +338,9 @@ class PalService:
         Get conversation history for a session
         """
         try:
-            chats = await self.chat_collection.find(
+            chats = list(self.chat_collection.find(
                 {"session_id": session_id}
-            ).sort("timestamp", 1).to_list(length=50)
+            ).sort("timestamp", 1).limit(50))
             
             return chats
             
@@ -348,12 +348,12 @@ class PalService:
             logger.error(f"Error getting session history: {e}")
             return []
     
-    async def _create_session(self, user_id: str, session_id: str):
+    def _create_session(self, user_id: str, session_id: str):
         """
         Create a new chat session
         """
         try:
-            await self.session_collection.insert_one({
+            self.session_collection.insert_one({
                 "_id": ObjectId(session_id),
                 "user_id": ObjectId(user_id),
                 "created_at": datetime.utcnow(),
@@ -363,7 +363,7 @@ class PalService:
         except Exception as e:
             logger.error(f"Error creating session: {e}")
     
-    async def _save_chat_message(
+    def _save_chat_message(
         self,
         user_id: str,
         session_id: str,
@@ -374,7 +374,7 @@ class PalService:
         Save chat message to history
         """
         try:
-            await self.chat_collection.insert_one({
+            self.chat_collection.insert_one({
                 "user_id": ObjectId(user_id),
                 "session_id": session_id,
                 "user_message": user_message,
@@ -384,7 +384,7 @@ class PalService:
             })
             
             # Update session activity
-            await self.session_collection.update_one(
+            self.session_collection.update_one(
                 {"_id": ObjectId(session_id)},
                 {
                     "$set": {"last_activity": datetime.utcnow()},
@@ -463,7 +463,7 @@ class PalService:
             ]
         }
     
-    async def get_conversation_starters(
+    def get_conversation_starters(
         self, 
         user_id: str
     ) -> List[Dict[str, str]]:
@@ -471,7 +471,7 @@ class PalService:
         Get personalized conversation starters
         """
         try:
-            context = await self._get_user_context(user_id)
+            context = self._get_user_context(user_id)
             starters = []
             
             # Based on skin concerns
@@ -522,25 +522,25 @@ class PalService:
                 {"text": "How often should I exfoliate?", "icon": "✨"}
             ]
     
-    async def clear_chat_history(self, user_id: str, session_id: Optional[str] = None):
+    def clear_chat_history(self, user_id: str, session_id: Optional[str] = None):
         """
         Clear chat history for a user or specific session
         """
         try:
             if session_id:
                 # Clear specific session
-                await self.chat_collection.delete_many({
+                self.chat_collection.delete_many({
                     "session_id": session_id,
                     "user_id": ObjectId(user_id)
                 })
             else:
                 # Clear all user's chat history
-                await self.chat_collection.delete_many({
+                self.chat_collection.delete_many({
                     "user_id": ObjectId(user_id)
                 })
                 
                 # Also clear sessions
-                await self.session_collection.delete_many({
+                self.session_collection.delete_many({
                     "user_id": ObjectId(user_id)
                 })
             
