@@ -202,6 +202,29 @@ jobs:
         # FINAL AGGRESSIVE CLEANUP right before docker-compose
         echo "Final cleanup before docker-compose..."
         
+        # Find and stop any container or process using port 6379 or 8000
+        echo "Freeing up ports 6379 and 8000..."
+        
+        # Check what's using the ports
+        echo "Checking port usage..."
+        sudo lsof -i :6379 2>/dev/null || true
+        sudo lsof -i :8000 2>/dev/null || true
+        
+        # Kill any system Redis that might be running
+        sudo systemctl stop redis-server 2>/dev/null || true
+        sudo systemctl stop redis 2>/dev/null || true
+        sudo pkill -f redis-server 2>/dev/null || true
+        
+        # Find and stop Docker containers using these ports
+        for port in 6379 8000; do
+          CONTAINER_ID=$(docker ps -q --filter "publish=$port")
+          if [ ! -z "$CONTAINER_ID" ]; then
+            echo "Stopping container using port $port: $CONTAINER_ID"
+            docker stop $CONTAINER_ID 2>/dev/null || true
+            docker rm -f $CONTAINER_ID 2>/dev/null || true
+          fi
+        done
+        
         # Remove specific named containers that might exist
         echo "Removing any existing skinsense containers..."
         docker rm -f skinsense_redis 2>/dev/null || true
