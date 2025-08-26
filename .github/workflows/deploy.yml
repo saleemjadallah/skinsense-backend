@@ -266,6 +266,12 @@ jobs:
         docker rm -f skinsense_api 2>/dev/null || true
         docker rm -f skinsense-backend_redis_1 2>/dev/null || true
         docker rm -f skinsense-backend_api_1 2>/dev/null || true
+        docker rm -f skinsense-backend-redis-1 2>/dev/null || true
+        docker rm -f skinsense-backend-api-1 2>/dev/null || true
+        
+        # Kill ANY Redis container regardless of name
+        echo "Killing all Redis containers..."
+        docker ps -a | grep redis | awk '{print $1}' | xargs -r docker rm -f 2>/dev/null || true
         
         # Stop and remove ALL containers to free up names and networks
         docker stop $(docker ps -aq) 2>/dev/null || true

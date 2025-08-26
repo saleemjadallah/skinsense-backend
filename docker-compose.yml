@@ -3,8 +3,8 @@ version: '3.8'
 services:
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"  # Standard Redis port
+    # Don't expose Redis port externally for security
+    # API container can still access it via internal network
     restart: unless-stopped
     networks:
       - app_network
