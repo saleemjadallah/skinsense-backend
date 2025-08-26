@@ -149,6 +149,32 @@ jobs:
           sleep 5
         fi
         
+        # CRITICAL: Clean networks BEFORE creating new deployment directory
+        echo "🔨 Pre-deployment network cleanup..."
+        
+        # Stop any running containers in the old deployment first
+        if [ -d ~/skinsense-backend ]; then
+          cd ~/skinsense-backend
+          # Try to stop gracefully with docker-compose
+          docker-compose down --volumes --remove-orphans 2>/dev/null || true
+          cd ~
+        fi
+        
+        # Force remove all skinsense-related networks
+        echo "Removing all skinsense-related networks..."
+        for network in $(docker network ls --format "{{.Name}}" | grep -E "skinsense|backend" || true); do
+          echo "Found network: $network"
+          # Force disconnect all containers
+          for container in $(docker network inspect $network --format '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null || true); do
+            docker network disconnect -f $network $container 2>/dev/null || true
+          done
+          # Remove the network
+          docker network rm $network 2>/dev/null || true
+        done
+        
+        # Clean up any dangling networks
+        docker network prune -f 2>/dev/null || true
+        
         # Backup old deployment
         if [ -d ~/skinsense-backend ]; then
           mv ~/skinsense-backend ~/skinsense-backend.backup.$(date +%Y%m%d_%H%M%S)
@@ -173,95 +199,6 @@ jobs:
         # Deploy with docker-compose
         echo "🔨 Building and deploying with Docker Compose..."
         
-        # Final network cleanup before deployment
-        echo "Final network cleanup..."
-        
-        # Get list of all networks with 'skinsense' in the name
-        SKINSENSE_NETWORKS=$(docker network ls --format "{{.Name}}" | grep -E "skinsense|backend" || true)
-        if [ ! -z "$SKINSENSE_NETWORKS" ]; then
-          echo "Found existing networks: $SKINSENSE_NETWORKS"
-          for network in $SKINSENSE_NETWORKS; do
-            echo "Removing network: $network"
-            # First disconnect any containers from the network
-            docker network inspect $network --format '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null | xargs -r -n1 docker network disconnect -f $network 2>/dev/null || true
-            # Then remove the network
-            docker network rm $network 2>/dev/null || true
-          done
-        fi
-        
-        # Additional cleanup for any remaining networks
-        docker network prune -f 2>/dev/null || true
-        
-        # Proper docker-compose deployment with network cleanup
-        echo "Starting Docker Compose deployment..."
-        
-        # First, clean up any existing containers and networks properly
-        echo "📦 Cleaning up any existing deployment..."
-        
-        # Stop and remove containers with docker-compose (handles network dependencies)
-        docker-compose down --volumes --remove-orphans 2>/dev/null || true
-        
-        # Also try with common project names that might have been used
-        docker-compose -p skinsense down --volumes --remove-orphans 2>/dev/null || true
-        docker-compose -p skinsense-backend down --volumes --remove-orphans 2>/dev/null || true
-        
-        # Remove any orphaned containers
-        docker rm -f skinsense_redis skinsense_api 2>/dev/null || true
-        
-        # Force stop and remove ALL containers (nuclear option for stuck networks)
-        echo "Force stopping all containers to free up networks..."
-        docker stop $(docker ps -aq) 2>/dev/null || true
-        docker rm -f $(docker ps -aq) 2>/dev/null || true
-        
-        # Clean up networks - but only after containers are removed
-        echo "Cleaning up networks..."
-        
-        # List all networks for debugging
-        echo "Current networks:"
-        docker network ls
-        
-        # Remove all possible network variations that docker-compose might have created
-        docker network rm skinsense-backend_default 2>/dev/null || true
-        docker network rm skinsense-backend_app_network 2>/dev/null || true
-        docker network rm skinsense_default 2>/dev/null || true
-        docker network rm skinsense_app_network 2>/dev/null || true
-        docker network rm app_network 2>/dev/null || true
-        
-        # Remove any network that starts with 'skinsense'
-        for net in $(docker network ls --format "{{.Name}}" | grep ^skinsense); do
-            echo "Removing network: $net"
-            docker network rm "$net" 2>/dev/null || true
-        done
-        
-        # Final prune
-        docker network prune -f 2>/dev/null || true
-        
-        echo "Networks after cleanup:"
-        docker network ls
-        
-        # Now deploy with docker-compose
-        echo "🚀 Starting fresh deployment with docker-compose..."
-        
-        # Force remove any existing networks that might conflict
-        # Docker Compose creates networks with the project name prefix
-        echo "Ensuring clean network state before deployment..."
-        
-        # Stop all containers first to free up networks
-        docker-compose down --volumes --remove-orphans 2>/dev/null || true
-        
-        # Remove all possible network names that might exist
-        for network in "skinsense-backend_app_network" "skinsense-backend_default" "skinsense_app_network" "skinsense_default"; do
-          if docker network ls | grep -q "$network"; then
-            echo "Removing existing network: $network"
-            # Disconnect all containers from the network first
-            docker network inspect "$network" --format '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null | xargs -r -n1 docker network disconnect -f "$network" 2>/dev/null || true
-            # Then remove the network
-            docker network rm "$network" 2>/dev/null || true
-          fi
-        done
-        
-        # Final network prune to clean up any dangling networks
-        docker network prune -f 2>/dev/null || true
         
         # Build and start services (docker-compose will create fresh networks)
         echo "Building and starting services..."
