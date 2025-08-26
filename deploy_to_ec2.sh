@@ -7,6 +7,11 @@ EC2_USER="${EC2_USER:-ubuntu}"
 PEM_FILE="${EC2_KEY_PATH:-/Users/saleemjadallah/Desktop/SkinSense(Dev)/skinsense.pem}"
 REMOTE_DIR="/home/ubuntu/skinsense-backend"
 
+if [ -z "$OPENAI_API_KEY" ]; then
+  echo "❌ OPENAI_API_KEY is not set in your environment. Export it before deploying." >&2
+  exit 1
+fi
+
 echo "🚀 Starting deployment to EC2..."
 
 # Create a temporary directory for deployment files
@@ -76,6 +81,13 @@ else
     cp .env "$TEMP_DIR/"
 fi
 
+# Ensure OPENAI_API_KEY is present in the .env to be deployed
+if grep -q '^OPENAI_API_KEY=' "$TEMP_DIR/.env"; then
+  sed -i '' "s|^OPENAI_API_KEY=.*$|OPENAI_API_KEY=$OPENAI_API_KEY|" "$TEMP_DIR/.env"
+else
+  echo "OPENAI_API_KEY=$OPENAI_API_KEY" >> "$TEMP_DIR/.env"
+fi
+
 # Compress the files
 echo "📦 Creating deployment archive..."
 cd "$TEMP_DIR"
@@ -111,7 +123,20 @@ ssh -i "$PEM_FILE" "$EC2_USER@$EC2_HOST" << 'ENDSSH'
     
     # Initialize database collections
     echo "🗄️ Initializing database collections..."
-    docker exec -it $(docker ps -q -f name=api) python create_collections.py || true
+    docker exec -it \
+      \
+      \
+      \
+      \
+      \
+      \
+      \
+      \
+      \
+      \
+      \
+      \
+      $(docker ps -q -f name=api) python create_collections.py || true
     docker exec -it $(docker ps -q -f name=api) python scripts/init_collections.py || true
     docker exec -it $(docker ps -q -f name=api) python scripts/init_routine_templates.py || true
     docker exec -it $(docker ps -q -f name=api) python scripts/init_goal_templates.py || true

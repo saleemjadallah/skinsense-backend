@@ -5,14 +5,14 @@
 # This file should be installed on the production server using:
 # crontab /path/to/crontab
 
-# Generate daily insights for all users at 6 AM server time
-0 6 * * * cd /app && /usr/bin/python3 app/scripts/generate_daily_insights.py >> /var/log/skinsense/insights_cron.log 2>&1
+# Generate daily insights for all users at 6 AM server time (run inside docker)
+0 6 * * * docker exec skinsense_api python app/scripts/generate_daily_insights.py >> /var/log/skinsense/insights_cron.log 2>&1
 
-# Clean up old insights (run weekly on Sunday at 3 AM)
-0 3 * * 0 cd /app && /usr/bin/python3 -c "from app.database import db; from datetime import datetime, timedelta; db.daily_insights.delete_many({'created_at': {'$lt': datetime.utcnow() - timedelta(days=30)}})" >> /var/log/skinsense/cleanup.log 2>&1
+# Clean up old insights (run weekly on Sunday at 3 AM) (run inside docker)
+0 3 * * 0 docker exec skinsense_api python -c "from app.database import db; from datetime import datetime, timedelta; deleted = db.daily_insights.delete_many({'created_at': {'$lt': datetime.utcnow() - timedelta(days=30)}}); print(f'Cleaned up {deleted.deleted_count} insights')" >> /var/log/skinsense/cleanup.log 2>&1
 
-# Health check for insights generation (every 12 hours)
-0 */12 * * * cd /app && /usr/bin/python3 -c "from app.database import db; from datetime import datetime; count = db.daily_insights.count_documents({'created_at': {'$gte': datetime.utcnow().replace(hour=0, minute=0, second=0)}}); print(f'Generated insights today: {count}')" >> /var/log/skinsense/health_check.log 2>&1
+# Health check for insights generation (every 12 hours) (run inside docker)
+0 */12 * * * docker exec skinsense_api python -c "from app.database import db; from datetime import datetime; count = db.daily_insights.count_documents({'created_at': {'$gte': datetime.utcnow().replace(hour=0, minute=0, second=0)}}); print(f'Generated insights today: {count}')" >> /var/log/skinsense/health_check.log 2>&1
 
-# Generate smart reminders daily at 10:00 UTC for active users
-0 10 * * * cd /app && /usr/bin/python3 app/scripts/generate_daily_reminders.py >> /var/log/skinsense/reminders_cron.log 2>&1
+# Generate smart reminders daily at 10:00 UTC for active users (run inside docker)
+0 10 * * * docker exec skinsense_api python app/scripts/generate_daily_reminders.py >> /var/log/skinsense/reminders_cron.log 2>&1
