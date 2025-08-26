@@ -470,7 +470,7 @@ async def get_todays_routines(
         )
         
         # Filter for today's routines with minimal scheduling
-        now = datetime.now()
+        now = get_utc_now()
         current_hour = now.hour
         current_day = now.isoweekday()  # 1..7 Mon..Sun
         todays_routines = []
@@ -543,7 +543,8 @@ async def get_routine_summary(
     """Get routine summary for homepage widget"""
     try:
         # Get today's routines
-        current_hour = datetime.now().hour
+        now = get_utc_now()
+        current_hour = now.hour
         
         # Get active routines for the user
         routines = list(db.routines.find({

@@ -3,6 +3,7 @@ from pymongo.database import Database
 from typing import List, Optional
 from datetime import datetime, timedelta
 from bson import ObjectId
+from app.utils.date_utils import get_utc_now
 
 from app.database import get_database
 from app.api.deps import get_current_active_user
@@ -34,7 +35,7 @@ def _seed_default_templates(db: Database):
             "difficulty_level": "beginner",
             "estimated_cost": "moderate",
             "popularity_score": 4.5,
-            "created_at": datetime.utcnow(),
+            "created_at": get_utc_now(),
             "steps": [
                 {
                     "order": 1,
@@ -83,7 +84,7 @@ def _seed_default_templates(db: Database):
             "difficulty_level": "intermediate",
             "estimated_cost": "premium",
             "popularity_score": 4.7,
-            "created_at": datetime.utcnow(),
+            "created_at": get_utc_now(),
             "steps": [
                 {
                     "order": 1,
@@ -125,7 +126,7 @@ def _seed_default_templates(db: Database):
             "difficulty_level": "beginner",
             "estimated_cost": "budget",
             "popularity_score": 4.3,
-            "created_at": datetime.utcnow(),
+            "created_at": get_utc_now(),
             "steps": [
                 {
                     "order": 1,
@@ -167,7 +168,7 @@ def _seed_default_templates(db: Database):
             "difficulty_level": "beginner",
             "estimated_cost": "moderate",
             "popularity_score": 4.6,
-            "created_at": datetime.utcnow(),
+            "created_at": get_utc_now(),
             "steps": [
                 {
                     "order": 1,
@@ -202,7 +203,7 @@ def _seed_default_templates(db: Database):
             "difficulty_level": "advanced",
             "estimated_cost": "premium",
             "popularity_score": 4.8,
-            "created_at": datetime.utcnow(),
+            "created_at": get_utc_now(),
             "steps": [
                 {
                     "order": 1,
@@ -281,8 +282,8 @@ async def generate_routine(
             effectiveness_scores=routine_dict.get("effectiveness_scores"),
             is_active=routine_dict.get("is_active", True),
             is_favorite=routine_dict.get("is_favorite", False),
-            created_at=routine_dict.get("created_at", datetime.utcnow()),
-            updated_at=routine_dict.get("updated_at", datetime.utcnow()),
+            created_at=routine_dict.get("created_at", get_utc_now()),
+            updated_at=routine_dict.get("updated_at", get_utc_now()),
             notes=routine_dict.get("notes"),
             tags=routine_dict.get("tags", [])
         )
@@ -411,7 +412,7 @@ async def get_todays_routines(
         )
         
         # Filter for today's routines
-        current_hour = datetime.now().hour
+        current_hour = get_utc_now().hour
         todays_routines = []
         
         for routine in routines:
@@ -467,7 +468,7 @@ async def get_routine_summary(
     """Get routine summary for homepage widget"""
     try:
         # Get today's routines
-        current_hour = datetime.now().hour
+        current_hour = get_utc_now().hour
         
         # Get active routines for the user
         routines = list(db.routines.find({
@@ -486,7 +487,7 @@ async def get_routine_summary(
                 todays_routines.append(routine)
         
         # Count completed steps for today
-        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = get_utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
         
         completed_today = 0
         total_steps = 0
@@ -595,7 +596,7 @@ async def update_routine(
         
         # Update routine
         update_data = routine_update.dict(exclude_unset=True)
-        update_data["updated_at"] = datetime.utcnow()
+        update_data["updated_at"] = get_utc_now()
         
         db.routines.update_one(
             {"_id": ObjectId(routine_id)},
@@ -797,8 +798,8 @@ async def duplicate_routine(
         duplicate = original.copy()
         duplicate.pop("_id", None)
         duplicate["name"] = duplicate_data.new_name
-        duplicate["created_at"] = datetime.utcnow()
-        duplicate["updated_at"] = datetime.utcnow()
+        duplicate["created_at"] = get_utc_now()
+        duplicate["updated_at"] = get_utc_now()
         duplicate["completion_count"] = 0
         duplicate["completion_streak"] = 0
         duplicate["last_completed"] = None

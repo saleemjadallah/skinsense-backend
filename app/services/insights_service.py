@@ -191,7 +191,7 @@ class InsightsService:
     
     def _get_current_season(self) -> str:
         """Get current season based on date"""
-        month = datetime.now().month
+        month = get_utc_now().month
         if month in [12, 1, 2]:
             return "winter"
         elif month in [3, 4, 5]:

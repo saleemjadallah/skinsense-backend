@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from bson import ObjectId
+from app.utils.date_utils import get_utc_now
 
 from app.api.deps import get_current_user
 from app.database import get_database
@@ -119,7 +120,7 @@ async def get_calendar_events(
             })
         
         # Check for daily photo reminders
-        today = datetime.now()
+        today = get_utc_now()
         if start_date <= today <= end_date:
             # Check if photo taken today
             today_analysis = db["skin_analyses"].find_one({
@@ -195,7 +196,7 @@ async def get_calendar_events(
                 "title": f"Goal: {goal['title']}",
                 "scheduledFor": goal["target_date"].isoformat(),
                 "status": "pending",
-                "priority": "high" if (goal["target_date"] - datetime.now()).days <= 7 else "medium",
+                "priority": "high" if (goal["target_date"] - get_utc_now()).days <= 7 else "medium",
                 "icon": "flag",
                 "color": "gradient_green",
                 "linkedEntityId": str(goal["_id"]),
@@ -203,7 +204,7 @@ async def get_calendar_events(
                     "current_progress": goal.get("current_progress", 0),
                     "target_value": goal.get("target_value", 100),
                     "metric": goal.get("target_metric"),
-                    "days_remaining": (goal["target_date"] - datetime.now()).days
+                    "days_remaining": (goal["target_date"] - get_utc_now()).days
                 }
             })
     
@@ -241,7 +242,7 @@ async def complete_calendar_event(
         db["routine_completions"].insert_one({
             "user_id": current_user["_id"],
             "routine_id": routine_id,
-            "completed_at": datetime.utcnow(),
+            "completed_at": get_utc_now(),
             "steps_completed": [],  # Could be enhanced
             "duration_minutes": 0,  # Could be calculated
         })

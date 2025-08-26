@@ -197,9 +197,9 @@ class SmartReminderService:
                 "skin_type": user.get("profile", {}).get("skin_type"),
                 "concerns": user.get("profile", {}).get("concerns", [])
             },
-            "time_of_day": datetime.now().strftime("%H:%M"),
-            "day_of_week": datetime.now().strftime("%A"),
-            "current_hour": datetime.now().hour,
+            "time_of_day": get_utc_now().strftime("%H:%M"),
+            "day_of_week": get_utc_now().strftime("%A"),
+            "current_hour": get_utc_now().hour,
             **additional_context
         }
         
@@ -394,7 +394,7 @@ class SmartReminderService:
         """Get upcoming routine times based on user preferences"""
         
         prefs = self._get_user_preferences(user_id)
-        current_hour = datetime.now().hour
+        current_hour = get_utc_now().hour
         upcoming = []
         
         # Parse routine times
@@ -630,7 +630,7 @@ class SmartReminderService:
                 "color": reminder_data.get("color", "gradient_blue")
             },
             "trigger_conditions": {
-                "time_based": datetime.fromisoformat(reminder_data.get("scheduled_time", datetime.now().isoformat()))
+                "time_based": datetime.fromisoformat(reminder_data.get("scheduled_time", get_utc_now().isoformat()))
             },
             "calendar_integration": {
                 "synced_to_calendar": False,
@@ -641,8 +641,8 @@ class SmartReminderService:
             },
             "status": "pending",
             "created_at": get_utc_now(),
-            "scheduled_for": datetime.fromisoformat(reminder_data.get("scheduled_time", datetime.now().isoformat())),
-            "expires_at": datetime.fromisoformat(reminder_data.get("scheduled_time", datetime.now().isoformat())) + timedelta(days=1)
+            "scheduled_for": datetime.fromisoformat(reminder_data.get("scheduled_time", get_utc_now().isoformat())),
+            "expires_at": datetime.fromisoformat(reminder_data.get("scheduled_time", get_utc_now().isoformat())) + timedelta(days=1)
         }
         
         result = self.reminders_collection.insert_one(reminder)
@@ -885,7 +885,7 @@ class SmartReminderService:
         """Validate and enhance AI-generated reminders with proper date handling"""
         
         enhanced = []
-        now = datetime.now()
+        now = get_utc_now()
         today = now.replace(hour=0, minute=0, second=0, microsecond=0)
         
         for i, reminder in enumerate(reminders[:5]):  # Limit to 5 reminders
@@ -981,7 +981,7 @@ class SmartReminderService:
     def _get_fallback_reminders_data(self) -> List[Dict]:
         """Get fallback reminders when AI generation fails"""
         
-        now = datetime.now()
+        now = get_utc_now()
         today = now.replace(hour=0, minute=0, second=0, microsecond=0)
         
         # Smart scheduling for fallback reminders
@@ -1058,7 +1058,7 @@ class SmartReminderService:
                 },
                 "scheduled_for": datetime.fromisoformat(data["scheduled_time"]),
                 "status": "pending",
-                "created_at": datetime.utcnow()
+                "created_at": get_utc_now()
             }
             saved_reminders.append(reminder)
         
