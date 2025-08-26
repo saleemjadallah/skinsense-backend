@@ -311,16 +311,46 @@ class PalService:
             )
             
             if latest_analysis:
-                context["latest_analysis"] = {
-                    "overall_score": latest_analysis.get("overall_skin_health_score", 0),
-                    "metrics": {
+                # Extract metrics from orbo_response
+                metrics = {}
+                overall_score = 0
+                
+                # Check if metrics are in orbo_response
+                if 'orbo_response' in latest_analysis and latest_analysis['orbo_response']:
+                    orbo = latest_analysis['orbo_response']
+                    if 'metrics' in orbo and orbo['metrics']:
+                        orbo_metrics = orbo['metrics']
+                        overall_score = orbo_metrics.get('overall_skin_health_score', 0)
+                        metrics = {
+                            "hydration": orbo_metrics.get("hydration", 0),
+                            "smoothness": orbo_metrics.get("smoothness", 0),
+                            "radiance": orbo_metrics.get("radiance", 0),
+                            "acne": orbo_metrics.get("acne", 0),
+                            "dark_spots": orbo_metrics.get("dark_spots", 0),
+                            "firmness": orbo_metrics.get("firmness", 0),
+                            "fine_lines_wrinkles": orbo_metrics.get("fine_lines_wrinkles", 0),
+                            "dark_circles": orbo_metrics.get("dark_circles", 0),
+                            "redness": orbo_metrics.get("redness", 0)
+                        }
+                
+                # Fallback to direct fields if not in orbo_response
+                if not metrics:
+                    overall_score = latest_analysis.get("overall_skin_health_score", 0)
+                    metrics = {
                         "hydration": latest_analysis.get("hydration", 0),
                         "smoothness": latest_analysis.get("smoothness", 0),
                         "radiance": latest_analysis.get("radiance", 0),
                         "acne": latest_analysis.get("acne", 0),
                         "dark_spots": latest_analysis.get("dark_spots", 0),
-                        "firmness": latest_analysis.get("firmness", 0)
+                        "firmness": latest_analysis.get("firmness", 0),
+                        "fine_lines_wrinkles": latest_analysis.get("fine_lines_wrinkles", 0),
+                        "dark_circles": latest_analysis.get("dark_circles", 0),
+                        "redness": latest_analysis.get("redness", 0)
                     }
+                
+                context["latest_analysis"] = {
+                    "overall_score": overall_score,
+                    "metrics": metrics
                 }
             
             # Get streak data
