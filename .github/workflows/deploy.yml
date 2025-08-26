@@ -27,6 +27,12 @@ jobs:
         cp docker-compose.prod.yml deployment/ 2>/dev/null || true
         cp .dockerignore deployment/
         
+        # Check if critical secrets are set
+        if [ -z "${{ secrets.MONGODB_URL }}" ]; then
+          echo "❌ ERROR: MONGODB_URL secret is not set in GitHub!"
+          exit 1
+        fi
+        
         # Create .env file with production secrets
         cat > deployment/.env << EOF
         APP_NAME="SkinSense AI"
@@ -284,9 +290,31 @@ jobs:
         docker-compose -p $PROJECT_NAME ps
         
         echo "Fetching logs..."
-        docker-compose -p $PROJECT_NAME logs --tail=50
+        docker-compose -p $PROJECT_NAME logs --tail=100
         
-        echo "✅ Docker Compose deployment completed!"
+        # Check if containers are actually running
+        echo "Checking container health..."
+        API_STATUS=$(docker-compose -p $PROJECT_NAME ps api | grep -c "Up" || true)
+        REDIS_STATUS=$(docker-compose -p $PROJECT_NAME ps redis | grep -c "Up" || true)
+        
+        if [ "$API_STATUS" -eq 0 ]; then
+          echo "❌ API container is not running!"
+          echo "API container logs:"
+          docker-compose -p $PROJECT_NAME logs api --tail=200
+        fi
+        
+        if [ "$REDIS_STATUS" -eq 0 ]; then
+          echo "❌ Redis container is not running!"
+          echo "Redis container logs:"
+          docker-compose -p $PROJECT_NAME logs redis --tail=100
+        fi
+        
+        if [ "$API_STATUS" -gt 0 ] && [ "$REDIS_STATUS" -gt 0 ]; then
+          echo "✅ Docker Compose deployment completed successfully!"
+        else
+          echo "❌ Deployment failed - one or more containers are not running"
+          exit 1
+        fi
         
         # Health check
         echo "🏥 Running health check..."
