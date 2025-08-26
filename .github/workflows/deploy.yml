@@ -199,6 +199,38 @@ jobs:
         # Deploy with docker-compose
         echo "🔨 Building and deploying with Docker Compose..."
         
+        # FINAL AGGRESSIVE NETWORK CLEANUP right before docker-compose
+        echo "Final network cleanup before docker-compose..."
+        
+        # Stop ALL containers to free up networks
+        docker stop $(docker ps -aq) 2>/dev/null || true
+        docker rm -f $(docker ps -aq) 2>/dev/null || true
+        
+        # Remove the specific network that's causing issues
+        docker network rm skinsense-backend_app_network 2>/dev/null || true
+        docker network rm skinsense-backend_default 2>/dev/null || true
+        
+        # Remove ALL networks that contain 'skinsense' or 'backend'
+        for net in $(docker network ls -q); do
+          name=$(docker network inspect $net --format '{{.Name}}' 2>/dev/null || true)
+          if echo "$name" | grep -qE "skinsense|backend"; then
+            echo "Force removing network: $name"
+            # Disconnect any remaining containers
+            docker network disconnect -f $name $(docker ps -aq) 2>/dev/null || true
+            # Force remove
+            docker network rm -f $net 2>/dev/null || true
+          fi
+        done
+        
+        # Prune all unused networks
+        docker network prune -f 2>/dev/null || true
+        
+        # Show current networks for debugging
+        echo "Networks after final cleanup:"
+        docker network ls
+        
+        # Small delay to ensure cleanup is complete
+        sleep 2
         
         # Build and start services (docker-compose will create fresh networks)
         echo "Building and starting services..."

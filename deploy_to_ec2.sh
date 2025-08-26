@@ -95,6 +95,7 @@ ssh -i "$PEM_FILE" "$EC2_USER@$EC2_HOST" << 'ENDSSH'
     
     # Stop existing containers
     echo "🛑 Stopping existing containers..."
+    docker network rm skinsense-backend_app_network || true
     docker-compose down || true
     
     # Build and start containers
