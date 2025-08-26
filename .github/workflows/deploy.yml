@@ -199,10 +199,17 @@ jobs:
         # Deploy with docker-compose
         echo "🔨 Building and deploying with Docker Compose..."
         
-        # FINAL AGGRESSIVE NETWORK CLEANUP right before docker-compose
-        echo "Final network cleanup before docker-compose..."
+        # FINAL AGGRESSIVE CLEANUP right before docker-compose
+        echo "Final cleanup before docker-compose..."
         
-        # Stop ALL containers to free up networks
+        # Remove specific named containers that might exist
+        echo "Removing any existing skinsense containers..."
+        docker rm -f skinsense_redis 2>/dev/null || true
+        docker rm -f skinsense_api 2>/dev/null || true
+        docker rm -f skinsense-backend_redis_1 2>/dev/null || true
+        docker rm -f skinsense-backend_api_1 2>/dev/null || true
+        
+        # Stop and remove ALL containers to free up names and networks
         docker stop $(docker ps -aq) 2>/dev/null || true
         docker rm -f $(docker ps -aq) 2>/dev/null || true
         
