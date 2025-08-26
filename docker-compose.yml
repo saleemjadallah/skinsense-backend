@@ -4,7 +4,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6380:6379"  # Map to 6380 on host to avoid conflicts
+      - "6379:6379"  # Standard Redis port
     restart: unless-stopped
     networks:
       - app_network
@@ -19,7 +19,7 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8001:8000"  # Map to 8001 on host to avoid conflicts
+      - "8000:8000"  # Standard API port
     env_file:
       - .env
     environment:

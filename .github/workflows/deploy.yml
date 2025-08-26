@@ -213,22 +213,18 @@ jobs:
         
         # Check what's using the ports
         echo "Checking port usage before cleanup..."
-        sudo netstat -tlnp | grep -E ':6379|:6380|:8000|:8001' || true
+        sudo netstat -tlnp | grep -E ':6379|:8000' || true
         
         # AGGRESSIVE PORT CLEANUP
-        echo "Killing any process using ports 6379, 6380, 8000, 8001..."
+        echo "Killing any process using ports 6379 and 8000..."
         
         # Method 1: Find and kill by port using lsof
         sudo lsof -ti:6379 | xargs -r sudo kill -9 2>/dev/null || true
-        sudo lsof -ti:6380 | xargs -r sudo kill -9 2>/dev/null || true
         sudo lsof -ti:8000 | xargs -r sudo kill -9 2>/dev/null || true
-        sudo lsof -ti:8001 | xargs -r sudo kill -9 2>/dev/null || true
         
         # Method 2: Find and kill by port using fuser
         sudo fuser -k 6379/tcp 2>/dev/null || true
-        sudo fuser -k 6380/tcp 2>/dev/null || true
         sudo fuser -k 8000/tcp 2>/dev/null || true
-        sudo fuser -k 8001/tcp 2>/dev/null || true
         
         # Method 3: Kill any Redis process
         sudo pkill -9 -f redis 2>/dev/null || true
@@ -257,25 +253,11 @@ jobs:
           echo "✅ Port 6379 is free"
         fi
         
-        if sudo lsof -i:6380 2>/dev/null | grep -q LISTEN; then
-          echo "WARNING: Port 6380 is still in use after cleanup!"
-          sudo lsof -i:6380
-        else
-          echo "✅ Port 6380 is free"
-        fi
-        
         if sudo lsof -i:8000 2>/dev/null | grep -q LISTEN; then
           echo "WARNING: Port 8000 is still in use after cleanup!"
           sudo lsof -i:8000
         else
           echo "✅ Port 8000 is free"
-        fi
-        
-        if sudo lsof -i:8001 2>/dev/null | grep -q LISTEN; then
-          echo "WARNING: Port 8001 is still in use after cleanup!"
-          sudo lsof -i:8001
-        else
-          echo "✅ Port 8001 is free"
         fi
         
         # Remove specific named containers that might exist
@@ -396,8 +378,8 @@ jobs:
         for i in $(seq 1 $HEALTH_CHECK_ATTEMPTS); do
           echo "Health check attempt $i of $HEALTH_CHECK_ATTEMPTS..."
           
-          # Try to curl the health endpoint (using port 8001 now)
-          HEALTH_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8001/health 2>/dev/null || echo "000")
+          # Try to curl the health endpoint (using port 8000)
+          HEALTH_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health 2>/dev/null || echo "000")
           
           if [ "$HEALTH_RESPONSE" = "200" ] || [ "$HEALTH_RESPONSE" = "503" ]; then
             echo "✅ API is responding (HTTP $HEALTH_RESPONSE)!"
@@ -405,7 +387,7 @@ jobs:
             
             # Show the actual health response
             echo "Health endpoint response:"
-            curl -s http://localhost:8001/health | python3 -m json.tool 2>/dev/null || curl -s http://localhost:8001/health
+            curl -s http://localhost:8000/health | python3 -m json.tool 2>/dev/null || curl -s http://localhost:8000/health
             break
           else
             echo "Health check attempt $i failed (HTTP $HEALTH_RESPONSE), waiting 10 seconds..."
@@ -431,13 +413,13 @@ jobs:
           echo ""
           echo "📌 Deployment Information:"
           echo "   Project: $PROJECT_NAME"
-          echo "   API URL: http://${{ secrets.EC2_HOST }}:8001"
-          echo "   Health: http://${{ secrets.EC2_HOST }}:8001/health"
-          echo "   Docs: http://${{ secrets.EC2_HOST }}:8001/docs"
+          echo "   API URL: http://${{ secrets.EC2_HOST }}:8000"
+          echo "   Health: http://${{ secrets.EC2_HOST }}:8000/health"
+          echo "   Docs: http://${{ secrets.EC2_HOST }}:8000/docs"
           echo ""
-          echo "   Note: Ports have been changed to avoid conflicts:"
-          echo "   - API: 8001 (instead of 8000)"
-          echo "   - Redis: 6380 (instead of 6379)"
+          echo "   Using standard ports:"
+          echo "   - API: 8000"
+          echo "   - Redis: 6379"
         else
           echo "❌ Health check failed after $HEALTH_CHECK_ATTEMPTS attempts."
           echo ""
