@@ -1,6 +1,7 @@
 """
 Universal Date/Time Utilities for SkinSense Backend
 Prevents date issues across all AI-generated content and services
+Handles MongoDB's requirement for timezone-naive datetimes
 """
 
 from datetime import datetime, timedelta, date, timezone
@@ -12,10 +13,46 @@ logger = logging.getLogger(__name__)
 
 def get_utc_now() -> datetime:
     """
-    Get current UTC time with timezone awareness.
-    Replaces deprecated datetime.utcnow()
+    Get current UTC time as timezone-NAIVE datetime for MongoDB compatibility.
+    MongoDB stores all datetimes as UTC internally but expects naive datetimes.
+    
+    Returns:
+        datetime: Current UTC time without timezone info (naive)
+    """
+    # Get current time in UTC then remove timezone info
+    # This ensures we have accurate UTC time that works with MongoDB
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+def get_utc_now_aware() -> datetime:
+    """
+    Get current UTC time WITH timezone awareness for Python operations.
+    Use this for datetime comparisons and calculations in Python code.
+    
+    Returns:
+        datetime: Current UTC time with timezone info (aware)
     """
     return datetime.now(timezone.utc)
+
+def ensure_mongodb_compatible(dt: Optional[datetime]) -> Optional[datetime]:
+    """
+    Ensure a datetime is compatible with MongoDB (timezone-naive).
+    
+    Args:
+        dt: Datetime object (can be naive or aware)
+    
+    Returns:
+        datetime: Timezone-naive datetime or None
+    """
+    if dt is None:
+        return None
+    
+    if dt.tzinfo is not None:
+        # If timezone-aware, convert to UTC and remove tzinfo
+        utc_dt = dt.astimezone(timezone.utc)
+        return utc_dt.replace(tzinfo=None)
+    
+    # Already naive, return as-is
+    return dt
 
 def ensure_future_datetime(
     dt_input: Union[str, datetime, date, None],
@@ -31,9 +68,9 @@ def ensure_future_datetime(
         category: Optional category for smart scheduling (e.g., 'routine', 'insight')
     
     Returns:
-        A datetime guaranteed to be in the future
+        A datetime guaranteed to be in the future (MongoDB-compatible, timezone-naive)
     """
-    now = get_utc_now()
+    now = get_utc_now()  # Already returns naive UTC datetime
     today = now.replace(hour=0, minute=0, second=0, microsecond=0)
     
     # Handle None or empty input
@@ -46,9 +83,8 @@ def ensure_future_datetime(
     if isinstance(dt_input, datetime):
         target_dt = dt_input
     elif isinstance(dt_input, date):
-        # Convert date to datetime at midnight
+        # Convert date to datetime at midnight (keep naive for MongoDB)
         target_dt = datetime.combine(dt_input, datetime.min.time())
-        target_dt = target_dt.replace(tzinfo=timezone.utc)
     elif isinstance(dt_input, str):
         try:
             # Try various formats
@@ -61,7 +97,7 @@ def ensure_future_datetime(
             ]:
                 try:
                     target_dt = datetime.strptime(dt_input, fmt)
-                    target_dt = target_dt.replace(tzinfo=timezone.utc)
+                    # Keep naive for MongoDB
                     break
                 except ValueError:
                     continue
@@ -69,8 +105,9 @@ def ensure_future_datetime(
             # Try ISO format with timezone
             if not target_dt:
                 target_dt = datetime.fromisoformat(dt_input.replace('Z', '+00:00'))
-                if target_dt.tzinfo is None:
-                    target_dt = target_dt.replace(tzinfo=timezone.utc)
+                # Convert to naive UTC if it has timezone
+                if target_dt.tzinfo is not None:
+                    target_dt = target_dt.astimezone(timezone.utc).replace(tzinfo=None)
             
         except (ValueError, AttributeError) as e:
             logger.warning(f"Could not parse datetime string: {dt_input}")
@@ -86,9 +123,9 @@ def ensure_future_datetime(
     if not target_dt:
         return now + timedelta(hours=default_hours_ahead)
     
-    # Ensure timezone awareness
-    if target_dt.tzinfo is None:
-        target_dt = target_dt.replace(tzinfo=timezone.utc)
+    # Convert to naive UTC if it has timezone info (for MongoDB)
+    if target_dt.tzinfo is not None:
+        target_dt = target_dt.astimezone(timezone.utc).replace(tzinfo=None)
     
     # Check if date is suspicious (past year or in the past)
     if target_dt.year < now.year or target_dt < now:
