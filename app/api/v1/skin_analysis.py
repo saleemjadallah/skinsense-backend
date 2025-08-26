@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from bson import ObjectId
 import base64
 from io import BytesIO
+from app.utils.date_utils import get_utc_now
 
 from app.database import get_database
 from app.api.deps import get_current_active_user, require_subscription, get_current_user_optional
@@ -80,7 +81,7 @@ async def create_skin_analysis(
     # Check rate limits for free users
     if current_user.subscription.tier == "basic":
         # Check monthly limit (5 analyses for free users)
-        start_of_month = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        start_of_month = get_utc_now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         monthly_count = db.skin_analyses.count_documents({
             "user_id": current_user.id,
             "created_at": {"$gte": start_of_month}
@@ -118,7 +119,7 @@ async def create_skin_analysis(
             thumbnail_url=thumbnail_url,
             is_baseline=analysis_data.is_baseline,
             tags=analysis_data.tags,
-            created_at=datetime.utcnow()
+            created_at=get_utc_now()
         )
         
         # Insert into database
@@ -126,14 +127,14 @@ async def create_skin_analysis(
         analysis_id = result.inserted_id
         
         # Update achievements cache for streak tracking
-        day_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        day_start = get_utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
         db.achievements.update_one(
             {"user_id": ObjectId(str(current_user.id)), "date": day_start},
             {
-                "$setOnInsert": {"created_at": datetime.utcnow()},
+                "$setOnInsert": {"created_at": get_utc_now()},
                 "$inc": {"photos_taken": 1},
                 "$addToSet": {"analysis_ids": str(analysis_id)},
-                "$set": {"updated_at": datetime.utcnow()}
+                "$set": {"updated_at": get_utc_now()}
             },
             upsert=True
         )
@@ -210,7 +211,7 @@ async def process_skin_analysis(
             "orbo_response": orbo_analysis,
             "ai_feedback": AIFeedback(**ai_feedback),
             "metadata": metadata.dict(),
-            "updated_at": datetime.utcnow()
+            "updated_at": get_utc_now()
         }
         
         db.skin_analyses.update_one(
@@ -228,7 +229,7 @@ async def process_skin_analysis(
         error_info = {
             "error": str(e),
             "user_message": "Analysis failed. Please try taking a new photo.",
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": get_utc_now().isoformat()
         }
         
         db.skin_analyses.update_one(
@@ -236,7 +237,7 @@ async def process_skin_analysis(
             {"$set": {
                 "analysis_data": error_info,
                 "status": "failed",
-                "updated_at": datetime.utcnow()
+                "updated_at": get_utc_now()
             }}
         )
 
@@ -432,7 +433,7 @@ async def complete_ai_pipeline(
     
     # Check rate limits for free users
     if current_user.subscription.tier == "basic":
-        start_of_month = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        start_of_month = get_utc_now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         monthly_count = db.skin_analyses.count_documents({
             "user_id": current_user.id,
             "created_at": {"$gte": start_of_month}
@@ -470,7 +471,7 @@ async def complete_ai_pipeline(
             thumbnail_url=thumbnail_url,
             is_baseline=analysis_data.is_baseline,
             tags=analysis_data.tags,
-            created_at=datetime.utcnow()
+            created_at=get_utc_now()
         )
         
         # Insert into database
@@ -478,14 +479,14 @@ async def complete_ai_pipeline(
         analysis_id = result.inserted_id
         
         # Update achievements cache for streak tracking
-        day_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        day_start = get_utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
         db.achievements.update_one(
             {"user_id": ObjectId(str(current_user.id)), "date": day_start},
             {
-                "$setOnInsert": {"created_at": datetime.utcnow()},
+                "$setOnInsert": {"created_at": get_utc_now()},
                 "$inc": {"photos_taken": 1},
                 "$addToSet": {"analysis_ids": str(analysis_id)},
-                "$set": {"updated_at": datetime.utcnow()}
+                "$set": {"updated_at": get_utc_now()}
             },
             upsert=True
         )
@@ -512,7 +513,7 @@ async def complete_ai_pipeline(
             {"$set": {
                 "analysis_data": complete_results["skin_analysis"],
                 "ai_feedback": complete_results["ai_feedback"],
-                "updated_at": datetime.utcnow()
+                "updated_at": get_utc_now()
             }}
         )
         
@@ -691,7 +692,7 @@ async def save_orbo_sdk_result(
             skin_type=orbo_data.get('skin_type'),
             concerns=orbo_data.get('concerns', []),
             confidence=orbo_data.get('confidence', 0.85),
-            analysis_timestamp=datetime.utcnow(),
+            analysis_timestamp=get_utc_now(),
             raw_response=orbo_data
         )
         
@@ -708,7 +709,7 @@ async def save_orbo_sdk_result(
             ),
             status="processing",  # Set to processing while AI pipeline runs
             tags=["orbo_sdk", "mobile_scan"],
-            created_at=datetime.utcnow()
+            created_at=get_utc_now()
         )
         
         # Save initial analysis to MongoDB
@@ -723,11 +724,11 @@ async def save_orbo_sdk_result(
             db.achievements.create_index([("user_id", 1), ("date", 1)], unique=True)
         except Exception:
             pass
-        day_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        day_start = get_utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
         db.achievements.update_one(
             {"user_id": ObjectId(str(current_user.id)), "date": day_start},
             {
-                "$setOnInsert": {"created_at": datetime.utcnow()},
+                "$setOnInsert": {"created_at": get_utc_now()},
                 "$inc": {"photos_taken": 1},
                 "$addToSet": {"analysis_ids": analysis_id},
             },
@@ -745,7 +746,7 @@ async def save_orbo_sdk_result(
             return {
                 "analysis_id": analysis_id,
                 "user_id": str(current_user.id),
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": get_utc_now().isoformat(),
                 "skin_metrics": {
                     "overall_health": orbo_metrics.overall_skin_health_score,
                     "hydration": orbo_metrics.hydration,
@@ -823,13 +824,13 @@ async def save_orbo_sdk_result(
         
         db.skin_analyses.update_one(
             {"_id": result.inserted_id},
-            {"$set": {"status": "completed", "analysis_completed_at": datetime.utcnow(), "product_recommendations": product_recommendations}}
+            {"$set": {"status": "completed", "analysis_completed_at": get_utc_now(), "product_recommendations": product_recommendations}}
         )
         
         complete_response = {
             "analysis_id": analysis_id,
             "user_id": str(current_user.id),
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": get_utc_now().isoformat(),
             "skin_metrics": {
                 "overall_health": orbo_metrics.overall_skin_health_score,
                 "hydration": orbo_metrics.hydration,
@@ -998,7 +999,7 @@ async def run_ai_for_analysis(
     
     db.skin_analyses.update_one(
         {"_id": ObjectId(analysis_id)},
-        {"$set": {"product_recommendations": recs, "status": "completed", "analysis_completed_at": datetime.utcnow()}},
+        {"$set": {"product_recommendations": recs, "status": "completed", "analysis_completed_at": get_utc_now()}},
     )
     
     # Get product recommendations from either 'products' or 'recommendations' key
@@ -1077,7 +1078,7 @@ async def test_orbo_sdk_result(
             "user_id": test_user_id,
             "orbo_response": orbo_data,
             "metrics": metrics,
-            "created_at": datetime.utcnow(),
+            "created_at": get_utc_now(),
             "status": "completed",
             "is_test": True,
             "raw_scores": orbo_scores
@@ -1164,7 +1165,7 @@ async def achievements_summary(
         return local_midnight - timedelta(minutes=tz_offset_minutes)
 
     # Today start (UTC) corresponding to local midnight
-    now_utc = datetime.utcnow()
+    now_utc = get_utc_now()
     # For achievements cache, use plain UTC midnight (same as how we save)
     today_start_utc_plain = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
     # For skin_analyses fallback, use timezone-adjusted
@@ -1503,7 +1504,7 @@ async def get_all_trends(
     return {
         "period_days": period_days,
         "metrics": trends,
-        "generated_at": datetime.utcnow().isoformat()
+        "generated_at": get_utc_now().isoformat()
     }
 
 # ORBO AI Integration Endpoints
@@ -1529,7 +1530,7 @@ async def analyze_skin_with_orbo(
             "original_filename": image.filename,
             "file_size": len(image_data),
             "content_type": image.content_type,
-            "upload_timestamp": datetime.utcnow().isoformat(),
+            "upload_timestamp": get_utc_now().isoformat(),
             "user_agent": request.headers.get("user-agent", "") if request else "",
             "client_ip": request.client.host if request else "unknown"
         }
@@ -1671,7 +1672,7 @@ async def populate_sample_data(
             
         for photo_num in range(photos_per_day):
             # Create timestamp for this analysis
-            analysis_time = datetime.utcnow() - timedelta(days=day_offset, hours=random.randint(0, 23))
+            analysis_time = get_utc_now() - timedelta(days=day_offset, hours=random.randint(0, 23))
             
             # Generate realistic skin metrics
             base_score = random.uniform(70, 90)
@@ -1742,7 +1743,7 @@ async def populate_sample_data(
                 {
                     "$inc": {"photos_taken": 1},
                     "$set": {
-                        "updated_at": datetime.utcnow(),
+                        "updated_at": get_utc_now(),
                         "last_analysis_id": str(analysis.get("_id", ""))
                     }
                 },
@@ -1750,7 +1751,7 @@ async def populate_sample_data(
             )
     
     # Calculate current streak for verification
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = get_utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
     cursor = db.achievements.find(
         {"user_id": user_oid, "photos_taken": {"$gt": 0}}
     ).sort("date", -1)
@@ -1778,4 +1779,119 @@ async def populate_sample_data(
         "days_covered": days_back,
         "user_id": str(current_user.id)
     }
+
+@router.get("/analysis/calendar/insights", response_model=Dict[str, Any])
+async def get_calendar_ai_insights(
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Database = Depends(get_database),
+    tz_offset_minutes: int = 0,
+):
+    """Generate AI Calendar Insights based on reminders, analysis day, and smart schedule stats.
+    Returns a small set of concise cards. Falls back to deterministic tips when OpenAI is not configured.
+    """
+    try:
+        # Build context
+        user_id = str(current_user.id)
+
+        # Today window (tz-adjusted)
+        now_utc = get_utc_now()
+        def to_local_day(dt: datetime) -> datetime:
+            local = dt + timedelta(minutes=tz_offset_minutes)
+            local_midnight = datetime(local.year, local.month, local.day)
+            return local_midnight - timedelta(minutes=tz_offset_minutes)
+        today_start_utc = to_local_day(now_utc)
+        today_end_utc = today_start_utc + timedelta(days=1)
+
+        # Smart reminders today
+        reminders = list(db.smart_reminders.find({
+            "user_id": {"$in": [user_id, ObjectId(user_id)]},
+            "scheduled_for": {"$gte": today_start_utc, "$lt": today_end_utc},
+        }).limit(50)) if hasattr(db, 'smart_reminders') else []
+
+        # Analysis done today?
+        has_analysis_today = db.skin_analyses.count_documents({
+            "user_id": {"$in": [user_id, ObjectId(user_id)]},
+            "created_at": {"$gte": today_start_utc, "$lt": today_end_utc},
+        }) > 0
+
+        # Achievements/streak
+        achievements = await achievements_summary(current_user=current_user, db=db, tz_offset_minutes=tz_offset_minutes)  # reuse logic
+
+        # Compose minimal context
+        context = {
+            "today": {
+                "analysis_done": has_analysis_today,
+                "reminders_count": len(reminders),
+                "reminder_categories": list({r.get("category", "general") for r in reminders}),
+            },
+            "smart_schedule": {
+                "streak_current": achievements.get("streak_current", 0),
+                "total_photos": achievements.get("total_photos", 0),
+            }
+        }
+
+        # If OpenAI available, generate insights
+        try:
+            from app.core.config import settings as app_settings
+            import openai as _openai
+            if getattr(app_settings, 'OPENAI_API_KEY', ''):
+                client = _openai.OpenAI(api_key=app_settings.OPENAI_API_KEY)
+                prompt = (
+                    "You are a concise skincare coach. Create 2-3 short 'AI Calendar Insights' for today's calendar, "
+                    "using this JSON context. Focus on: 1) whether analysis was done today, 2) the number & type of reminders, "
+                    "3) current streak. Each insight must be 1-2 sentences, actionable and encouraging. Respond as JSON: "
+                    "{\"insights\":[{\"title\":string,\"body\":string,\"icon\":string}]}\n\nContext:\n" + json.dumps(context)
+                )
+                resp = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "Return valid JSON only."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.6,
+                    max_tokens=400,
+                )
+                raw = resp.choices[0].message.content or "{}"
+                if raw.startswith("```"):
+                    raw = raw.strip("` ")
+                    raw = raw.replace("json", "")
+                data = json.loads(raw)
+                insights = data.get("insights")
+                if isinstance(insights, list) and insights:
+                    return {"insights": insights[:3], "source": "openai"}
+        except Exception as e:
+            logger.warning(f"AI Calendar Insights fallback: {e}")
+
+        # Deterministic fallback
+        fallback = []
+        streak = context["smart_schedule"]["streak_current"]
+        if context["today"]["analysis_done"]:
+            fallback.append({
+                "title": "Great job snapping progress",
+                "body": "Today's analysis keeps your streak moving. Compare results to adjust your routine.",
+                "icon": "insights"
+            })
+        if context["today"]["reminders_count"] > 0:
+            fallback.append({
+                "title": "Stay on track",
+                "body": f"You have {context['today']['reminders_count']} reminder(s) today. Complete them to boost results.",
+                "icon": "checklist"
+            })
+        if streak > 0:
+            fallback.append({
+                "title": "Consistency pays off",
+                "body": f"You're on a {streak}-day streak—keep momentum for better long-term outcomes.",
+                "icon": "trending_up"
+            })
+        if not fallback:
+            fallback.append({
+                "title": "Quick win for today",
+                "body": "Take a progress photo or schedule a reminder to kickstart your momentum.",
+                "icon": "bolt"
+            })
+        return {"insights": fallback[:3], "source": "fallback"}
+
+    except Exception as e:
+        logger.error(f"Calendar insights failed: {e}")
+        return {"insights": [{"title": "Insights unavailable", "body": "Please try again later.", "icon": "warning"}], "source": "error"}
 
