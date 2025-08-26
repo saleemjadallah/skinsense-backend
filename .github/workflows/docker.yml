@@ -1,11 +1,13 @@
 name: Build Docker Image (Optional Push)
 
+# DISABLED: Using deploy.yml for all deployments
+# This workflow is kept for reference but disabled to prevent conflicts
 on:
-  push:
-    branches: [ main ]
-    tags:
-      - 'v*'
-  workflow_dispatch:
+  workflow_dispatch:  # Only manual trigger
+  # push:
+  #   branches: [ main ]
+  #   tags:
+  #     - 'v*'
 
 jobs:
   build:
