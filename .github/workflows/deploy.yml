@@ -273,6 +273,17 @@ jobs:
         echo "Killing all Redis containers..."
         docker ps -a | grep redis | awk '{print $1}' | xargs -r docker rm -f 2>/dev/null || true
         
+        # CRITICAL: Kill anything using port 8000 specifically
+        echo "Force killing anything on port 8000..."
+        # Find container using port 8000 and kill it
+        docker ps --format "table {{.ID}}\t{{.Names}}\t{{.Ports}}" | grep "8000" | awk '{print $1}' | xargs -r docker rm -f 2>/dev/null || true
+        # Find process using port 8000 outside Docker
+        sudo lsof -ti:8000 | xargs -r sudo kill -9 2>/dev/null || true
+        sudo fuser -k 8000/tcp 2>/dev/null || true
+        # Kill any uvicorn or gunicorn processes
+        sudo pkill -9 -f uvicorn 2>/dev/null || true
+        sudo pkill -9 -f gunicorn 2>/dev/null || true
+        
         # Stop and remove ALL containers to free up names and networks
         docker stop $(docker ps -aq) 2>/dev/null || true
         docker rm -f $(docker ps -aq) 2>/dev/null || true
@@ -303,9 +314,31 @@ jobs:
         # Small delay to ensure cleanup is complete
         sleep 2
         
+        # FINAL PORT CHECK AND CLEANUP before docker-compose
+        echo "=== FINAL PORT CHECK ==="
+        echo "Checking what's using port 8000..."
+        sudo lsof -i:8000 || echo "Port 8000 is free"
+        sudo netstat -tlnp | grep :8000 || echo "No netstat entry for 8000"
+        
+        # One more aggressive cleanup
+        echo "Final cleanup of port 8000..."
+        sudo fuser -k 8000/tcp 2>/dev/null || true
+        sudo lsof -ti:8000 | xargs -r sudo kill -9 2>/dev/null || true
+        
+        # Nuclear option: stop ALL docker containers
+        echo "Stopping ALL Docker containers as final cleanup..."
+        docker stop $(docker ps -q) 2>/dev/null || true
+        docker rm -f $(docker ps -aq) 2>/dev/null || true
+        
+        # Wait for ports to be released
+        sleep 5
+        
+        echo "Final port check after cleanup:"
+        sudo lsof -i:8000 || echo "✅ Port 8000 is NOW free"
+        
         # Build and start services with explicit project name to avoid conflicts
         echo "Building and starting services with project name..."
-        PROJECT_NAME="skinsense-$(date +%s)"
+        PROJECT_NAME="skinsense-backend"
         echo "Using project name: $PROJECT_NAME"
         
         # Build with explicit project name
