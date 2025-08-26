@@ -4,10 +4,12 @@ Smart Reminder Service with AI generation and calendar integration
 import openai
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from bson import ObjectId
 from collections import Counter
+from app.utils.date_utils import get_utc_now
 
 from app.core.config import settings
 from app.database import db, get_database
@@ -215,10 +217,10 @@ class SmartReminderService:
         # Calculate days since last photo
         days_since = None
         if latest:
-            days_since = (datetime.utcnow() - latest["created_at"]).days
+            days_since = (get_utc_now() - latest["created_at"]).days
         
         # Get achievement data for streak
-        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = get_utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
         
         # Get streak from achievements
         streak_data = self._calculate_photo_streak(user_id)
@@ -260,7 +262,7 @@ class SmartReminderService:
         """Calculate photo streak from achievements"""
         
         user_oid = ObjectId(user_id) if not isinstance(user_id, ObjectId) else user_id
-        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = get_utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
         
         # Get achievement records
         cursor = self.db["achievements"].find(
@@ -302,7 +304,7 @@ class SmartReminderService:
         """Get enhanced routine completion statistics with patterns"""
         
         # Get last 7 days of routine completions
-        week_ago = datetime.utcnow() - timedelta(days=7)
+        week_ago = get_utc_now() - timedelta(days=7)
         completions = list(self.db["routine_completions"].find({
             "$or": [{"user_id": user_id}, {"user_id": ObjectId(user_id) if len(user_id) == 24 else user_id}],
             "completed_at": {"$gte": week_ago}
@@ -329,7 +331,7 @@ class SmartReminderService:
         usual_evening_hour = Counter(evening_times).most_common(1)[0][0] if evening_times else 20
         
         # Check today's completions
-        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = get_utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
         today_completions = [c for c in completions 
                            if c["completed_at"] >= today_start]
         
@@ -423,9 +425,9 @@ class SmartReminderService:
         last_update = goal.get("last_progress_update")
         if not last_update:
             created = goal.get("created_at")
-            if created and (datetime.utcnow() - created).days > 7:
+            if created and (get_utc_now() - created).days > 7:
                 return True
-        elif (datetime.utcnow() - last_update).days > 7:
+        elif (get_utc_now() - last_update).days > 7:
             return True
         return False
     
@@ -436,13 +438,13 @@ class SmartReminderService:
             return None
         if isinstance(target_date, str):
             target_date = datetime.fromisoformat(target_date)
-        return (target_date - datetime.utcnow()).days
+        return (target_date - get_utc_now()).days
     
     def _get_routine_stats(self, user_id: str) -> Dict:
         """Get routine completion statistics"""
         
         # Get last 7 days of routine completions
-        week_ago = datetime.utcnow() - timedelta(days=7)
+        week_ago = get_utc_now() - timedelta(days=7)
         completions = list(self.db["routine_completions"].find({
             "user_id": user_id,
             "completed_at": {"$gte": week_ago}
@@ -638,7 +640,7 @@ class SmartReminderService:
                 } if reminder_data.get("recurrence") != "none" else None
             },
             "status": "pending",
-            "created_at": datetime.utcnow(),
+            "created_at": get_utc_now(),
             "scheduled_for": datetime.fromisoformat(reminder_data.get("scheduled_time", datetime.now().isoformat())),
             "expires_at": datetime.fromisoformat(reminder_data.get("scheduled_time", datetime.now().isoformat())) + timedelta(days=1)
         }
@@ -669,8 +671,8 @@ class SmartReminderService:
                 {"time_before": 10, "sent": False}
             ],
             "status": "scheduled",
-            "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow()
+            "created_at": get_utc_now(),
+            "updated_at": get_utc_now()
         }
         
         # Add recurrence if specified
@@ -702,7 +704,7 @@ class SmartReminderService:
         query = {
             "user_id": user_id,
             "status": "pending",
-            "scheduled_for": {"$gte": datetime.utcnow()}
+            "scheduled_for": {"$gte": get_utc_now()}
         }
         
         if min_priority:
@@ -737,7 +739,7 @@ class SmartReminderService:
             "user_id": user_id,
             "reminder_id": reminder_id,
             "action": action,
-            "timestamp": datetime.utcnow(),
+            "timestamp": get_utc_now(),
             "engagement_score": engagement_score
         }
         
@@ -757,7 +759,7 @@ class SmartReminderService:
                 {
                     "$set": {
                         "status": status_map[action],
-                        "interacted_at": datetime.utcnow()
+                        "interacted_at": get_utc_now()
                     }
                 }
             )
@@ -772,7 +774,7 @@ class SmartReminderService:
     ) -> Dict:
         """Snooze a reminder and update calendar if synced"""
         
-        new_time = datetime.utcnow() + timedelta(minutes=duration_minutes)
+        new_time = get_utc_now() + timedelta(minutes=duration_minutes)
         
         # Update reminder
         self.reminders_collection.update_one(
@@ -794,7 +796,7 @@ class SmartReminderService:
                     "$set": {
                         "start_time": new_time,
                         "end_time": new_time + timedelta(minutes=15),
-                        "updated_at": datetime.utcnow()
+                        "updated_at": get_utc_now()
                     }
                 }
             )
@@ -825,7 +827,7 @@ class SmartReminderService:
                 ],
                 "push_notifications": True,
                 "email_notifications": False,
-                "updated_at": datetime.utcnow()
+                "updated_at": get_utc_now()
             }
             self.preferences_collection.insert_one(default_prefs)
             return default_prefs
@@ -854,7 +856,7 @@ class SmartReminderService:
         sorted_completions = sorted(completions, key=lambda x: x['completed_at'], reverse=True)
         
         streak = 0
-        current_date = datetime.utcnow().date()
+        current_date = get_utc_now().date()
         
         for completion in sorted_completions:
             completion_date = completion['completed_at'].date()
@@ -880,11 +882,85 @@ class SmartReminderService:
             return "both"
     
     def _validate_and_enhance_reminders(self, reminders: List[Dict]) -> List[Dict]:
-        """Validate and enhance AI-generated reminders"""
+        """Validate and enhance AI-generated reminders with proper date handling"""
         
         enhanced = []
-        for reminder in reminders[:5]:  # Limit to 5 reminders
-            # Ensure all required fields
+        now = datetime.now()
+        today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        for i, reminder in enumerate(reminders[:5]):  # Limit to 5 reminders
+            # Get the scheduled time from AI response
+            ai_scheduled_time = reminder.get("scheduled_time")
+            
+            # Smart time determination
+            fixed_time = None
+            
+            if ai_scheduled_time:
+                try:
+                    # Try to parse the AI's scheduled time
+                    scheduled_dt = datetime.fromisoformat(str(ai_scheduled_time).replace('Z', '+00:00'))
+                    
+                    # Check if the date is suspicious (past year or too far past)
+                    if scheduled_dt.year < now.year or scheduled_dt < now:
+                        # Extract time components only
+                        hour = scheduled_dt.hour
+                        minute = scheduled_dt.minute
+                        
+                        # Apply time to today
+                        fixed_time = today.replace(hour=hour, minute=minute)
+                        
+                        # If time has passed today, schedule for tomorrow
+                        if fixed_time <= now:
+                            fixed_time = fixed_time + timedelta(days=1)
+                    else:
+                        # AI time is valid and in future
+                        fixed_time = scheduled_dt
+                        
+                except (ValueError, AttributeError):
+                    # If parsing fails, try to extract just time
+                    time_match = re.search(r'(\d{1,2}):(\d{2})', str(ai_scheduled_time))
+                    if time_match:
+                        hour = int(time_match.group(1))
+                        minute = int(time_match.group(2))
+                        if 0 <= hour < 24 and 0 <= minute < 60:
+                            fixed_time = today.replace(hour=hour, minute=minute)
+                            if fixed_time <= now:
+                                fixed_time = fixed_time + timedelta(days=1)
+            
+            # If we couldn't fix the time, use smart defaults based on category
+            if not fixed_time:
+                category = reminder.get("category", "routine")
+                priority = reminder.get("priority", 5)
+                
+                if category == "routine":
+                    # Morning routine at 8 AM, evening at 8 PM
+                    if "morning" in reminder.get("title", "").lower():
+                        fixed_time = today.replace(hour=8, minute=0)
+                    elif "evening" in reminder.get("title", "").lower():
+                        fixed_time = today.replace(hour=20, minute=0)
+                    else:
+                        fixed_time = today.replace(hour=14, minute=0)
+                elif category == "photo":
+                    fixed_time = today.replace(hour=14, minute=0)  # Mid-day for photos
+                elif category == "hydration":
+                    fixed_time = today.replace(hour=12, minute=0)  # Noon for hydration
+                else:
+                    # Default based on priority
+                    hours_offset = 8 - priority  # Higher priority = sooner
+                    fixed_time = now + timedelta(hours=max(1, hours_offset))
+                
+                # Ensure future time
+                if fixed_time <= now:
+                    fixed_time = fixed_time + timedelta(days=1)
+            
+            # Space out reminders by at least 30 minutes
+            if enhanced and i > 0:
+                last_time_str = enhanced[-1]["scheduled_time"]
+                last_time = datetime.fromisoformat(last_time_str)
+                if (fixed_time - last_time).total_seconds() < 1800:  # 30 minutes
+                    fixed_time = last_time + timedelta(minutes=30)
+            
+            # Ensure all required fields with fixed time
             enhanced_reminder = {
                 "type": reminder.get("type", "action"),
                 "category": reminder.get("category", "routine"),
@@ -895,7 +971,7 @@ class SmartReminderService:
                 "action_route": reminder.get("action_route", "/home"),
                 "icon": reminder.get("icon", "star"),
                 "color": reminder.get("color", "gradient_blue"),
-                "scheduled_time": reminder.get("scheduled_time", datetime.now().isoformat()),
+                "scheduled_time": fixed_time.isoformat(),  # Use our fixed time
                 "recurrence": reminder.get("recurrence", "none")
             }
             enhanced.append(enhanced_reminder)
@@ -906,6 +982,18 @@ class SmartReminderService:
         """Get fallback reminders when AI generation fails"""
         
         now = datetime.now()
+        today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # Smart scheduling for fallback reminders
+        morning_time = today.replace(hour=8, minute=0)
+        if morning_time <= now:
+            morning_time = (today + timedelta(days=1)).replace(hour=8, minute=0)
+        
+        afternoon_time = now + timedelta(hours=2)
+        evening_time = today.replace(hour=20, minute=0)
+        if evening_time <= now:
+            evening_time = (today + timedelta(days=1)).replace(hour=20, minute=0)
+        
         return [
             {
                 "type": "action",
@@ -916,8 +1004,8 @@ class SmartReminderService:
                 "action_text": "Start Routine",
                 "action_route": "/routine/morning",
                 "icon": "sun",
-                "color": "gradient_blue",
-                "scheduled_time": now.replace(hour=8, minute=0).isoformat(),
+                "color": "gradient_orange",
+                "scheduled_time": morning_time.isoformat(),
                 "recurrence": "daily"
             },
             {
@@ -930,8 +1018,21 @@ class SmartReminderService:
                 "action_route": "/care-hub/learn",
                 "icon": "book",
                 "color": "gradient_purple",
-                "scheduled_time": (now + timedelta(hours=2)).isoformat(),
+                "scheduled_time": afternoon_time.isoformat(),
                 "recurrence": "none"
+            },
+            {
+                "type": "action",
+                "category": "routine",
+                "priority": 9,
+                "title": "Evening Cleanse",
+                "message": "Time to remove makeup and cleanse thoroughly",
+                "action_text": "View Routine",
+                "action_route": "/routine/evening",
+                "icon": "moon",
+                "color": "gradient_blue",
+                "scheduled_time": evening_time.isoformat(),
+                "recurrence": "daily"
             }
         ]
     
@@ -967,7 +1068,7 @@ class SmartReminderService:
         """Check for existing reminders for today that are still valid"""
         try:
             # Get today's date range in UTC
-            today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+            today = get_utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
             tomorrow = today + timedelta(days=1)
             
             print(f"[DEBUG] Searching for reminders between {today} and {tomorrow}")

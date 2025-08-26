@@ -9,6 +9,7 @@ from bson import ObjectId
 import random
 import openai
 import json
+from ..utils.date_utils import get_utc_now, should_regenerate_content, calculate_expiry_time
 from ..models.insights import (
     DailyInsights, InsightContent, PersonalizationFactors, InsightTemplate
 )
@@ -83,10 +84,18 @@ class InsightsService:
         existing = self.db.daily_insights.find_one({
             "user_id": ObjectId(user_id),
             "generated_for_date": start_of_day,  # Use datetime instead of date
-            "expires_at": {"$gt": datetime.utcnow()}
+            "expires_at": {"$gt": get_utc_now()}
         })
         
         if existing:
+            # Check if insights are stale and should be regenerated
+            created_at = existing.get('created_at', existing.get('generated_for_date'))
+            if should_regenerate_content(created_at, 'insight'):
+                logger.info(f"Insights for user {user_id} are stale, will regenerate")
+                # Delete stale insights
+                self.db.daily_insights.delete_one({"_id": existing["_id"]})
+                return None
+            
             return DailyInsights(**existing)
         return None
     
@@ -107,7 +116,7 @@ class InsightsService:
         )
         
         # Get routine completion rate (last 7 days)
-        week_ago = datetime.utcnow() - timedelta(days=7)
+        week_ago = get_utc_now() - timedelta(days=7)
         routine_completions = self.db.routine_completions.count_documents({
             "user_id": user_oid,
             "completed_at": {"$gte": week_ago}
@@ -398,7 +407,7 @@ class InsightsService:
             insights=insights,
             personalization_factors=factors,
             generated_for_date=datetime.combine(today, datetime.min.time()),  # Convert date to datetime
-            expires_at=datetime.utcnow() + timedelta(hours=24),
+            expires_at=calculate_expiry_time('insight'),
             generation_method="ai_personalized" if user_data else "fallback"
         )
         
@@ -416,7 +425,7 @@ class InsightsService:
             {
                 "$set": {
                     "viewed": True,
-                    "viewed_at": datetime.utcnow()
+                    "viewed_at": get_utc_now()
                 }
             }
         )
@@ -437,7 +446,7 @@ class InsightsService:
                     "interactions": {
                         "type": interaction_type,  # "clicked", "dismissed", "shared"
                         "insight_index": insight_index,
-                        "timestamp": datetime.utcnow()
+                        "timestamp": get_utc_now()
                     }
                 }
             }
