@@ -100,6 +100,19 @@ def connect_to_mongo():
     max_retries = 3
     retry_delay = 2
     
+    # Log MongoDB URL status (without exposing credentials)
+    if not settings.MONGODB_URL:
+        logger.error("MONGODB_URL is not set or empty!")
+        raise ValueError("MONGODB_URL environment variable is required")
+    
+    # Log URL format for debugging (mask credentials)
+    if "mongodb+srv://" in settings.MONGODB_URL:
+        logger.info("MongoDB URL format: mongodb+srv://...")
+    elif "mongodb://" in settings.MONGODB_URL:
+        logger.info("MongoDB URL format: mongodb://...")
+    else:
+        logger.warning(f"Unexpected MongoDB URL format")
+    
     for attempt in range(max_retries):
         try:
             logger.info(f"Connecting to MongoDB (attempt {attempt + 1}/{max_retries})...")

@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import logging
 
 from app.core.config import settings
-from app.database import connect_to_mongo, close_mongo_connection
+from app.database import connect_to_mongo, close_mongo_connection, db
 from app.core.redis import get_redis, close_redis
 from app.api.v1 import auth, users, skin_analysis, products, community, routines, notifications, goals, plans, monitoring, learning, insights, homepage_optimized
 from app.api.v1.endpoints import calendar, reminders
@@ -92,11 +92,17 @@ app.include_router(homepage_optimized.router, prefix="/api/v1", tags=["Optimized
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
+    # Check database connection
+    db_status = "connected" if db.database is not None else "disconnected"
+    
     return {
-        "status": "healthy",
+        "status": "healthy" if db_status == "connected" else "degraded",
         "service": settings.APP_NAME,
         "version": settings.APP_VERSION,
-        "environment": "development" if settings.DEBUG else "production"
+        "environment": "development" if settings.DEBUG else "production",
+        "database": db_status,
+        "mongodb_url_set": bool(settings.MONGODB_URL),
+        "database_name": settings.DATABASE_NAME if settings.DATABASE_NAME else "not_set"
     }
 
 # Root endpoint
