@@ -213,18 +213,22 @@ jobs:
         
         # Check what's using the ports
         echo "Checking port usage before cleanup..."
-        sudo netstat -tlnp | grep -E ':6379|:8000' || true
+        sudo netstat -tlnp | grep -E ':6379|:6380|:8000|:8001' || true
         
         # AGGRESSIVE PORT CLEANUP
-        echo "Killing any process using port 6379..."
+        echo "Killing any process using ports 6379, 6380, 8000, 8001..."
         
         # Method 1: Find and kill by port using lsof
         sudo lsof -ti:6379 | xargs -r sudo kill -9 2>/dev/null || true
+        sudo lsof -ti:6380 | xargs -r sudo kill -9 2>/dev/null || true
         sudo lsof -ti:8000 | xargs -r sudo kill -9 2>/dev/null || true
+        sudo lsof -ti:8001 | xargs -r sudo kill -9 2>/dev/null || true
         
         # Method 2: Find and kill by port using fuser
         sudo fuser -k 6379/tcp 2>/dev/null || true
+        sudo fuser -k 6380/tcp 2>/dev/null || true
         sudo fuser -k 8000/tcp 2>/dev/null || true
+        sudo fuser -k 8001/tcp 2>/dev/null || true
         
         # Method 3: Kill any Redis process
         sudo pkill -9 -f redis 2>/dev/null || true
@@ -253,11 +257,25 @@ jobs:
           echo "✅ Port 6379 is free"
         fi
         
+        if sudo lsof -i:6380 2>/dev/null | grep -q LISTEN; then
+          echo "WARNING: Port 6380 is still in use after cleanup!"
+          sudo lsof -i:6380
+        else
+          echo "✅ Port 6380 is free"
+        fi
+        
         if sudo lsof -i:8000 2>/dev/null | grep -q LISTEN; then
           echo "WARNING: Port 8000 is still in use after cleanup!"
           sudo lsof -i:8000
         else
           echo "✅ Port 8000 is free"
+        fi
+        
+        if sudo lsof -i:8001 2>/dev/null | grep -q LISTEN; then
+          echo "WARNING: Port 8001 is still in use after cleanup!"
+          sudo lsof -i:8001
+        else
+          echo "✅ Port 8001 is free"
         fi
         
         # Remove specific named containers that might exist
