@@ -242,8 +242,32 @@ jobs:
         # Now deploy with docker-compose
         echo "🚀 Starting fresh deployment with docker-compose..."
         
-        # Build and start services
+        # Force remove any existing networks that might conflict
+        # Docker Compose creates networks with the project name prefix
+        echo "Ensuring clean network state before deployment..."
+        
+        # Stop all containers first to free up networks
+        docker-compose down --volumes --remove-orphans 2>/dev/null || true
+        
+        # Remove all possible network names that might exist
+        for network in "skinsense-backend_app_network" "skinsense-backend_default" "skinsense_app_network" "skinsense_default"; do
+          if docker network ls | grep -q "$network"; then
+            echo "Removing existing network: $network"
+            # Disconnect all containers from the network first
+            docker network inspect "$network" --format '{{range .Containers}}{{.Name}} {{end}}' 2>/dev/null | xargs -r -n1 docker network disconnect -f "$network" 2>/dev/null || true
+            # Then remove the network
+            docker network rm "$network" 2>/dev/null || true
+          fi
+        done
+        
+        # Final network prune to clean up any dangling networks
+        docker network prune -f 2>/dev/null || true
+        
+        # Build and start services (docker-compose will create fresh networks)
+        echo "Building and starting services..."
         docker-compose build --no-cache
+        
+        # Use --force-recreate to ensure fresh containers and networks
         docker-compose up -d --force-recreate --remove-orphans
         
         # Wait for services to start
