@@ -8,7 +8,7 @@ import logging
 from app.core.config import settings
 from app.database import connect_to_mongo, close_mongo_connection, db
 from app.core.redis import get_redis, close_redis
-from app.api.v1 import auth, users, skin_analysis, products, community, routines, notifications, goals, plans, monitoring, learning, insights, homepage_optimized
+from app.api.v1 import auth, users, skin_analysis, products, community, routines, notifications, goals, plans, monitoring, learning, insights, homepage_optimized, pal
 from app.api.v1.endpoints import calendar, reminders
 from app.core.monitoring import setup_metrics  # track_active_users
 
@@ -85,6 +85,7 @@ app.include_router(insights.router, prefix="/api/v1/insights", tags=["Insights"]
 app.include_router(reminders.router, prefix="/api/v1/reminders", tags=["Smart Reminders"])
 app.include_router(calendar.router, prefix="/api/v1/calendar", tags=["Calendar"])
 app.include_router(homepage_optimized.router, prefix="/api/v1", tags=["Optimized"])
+app.include_router(pal.router, prefix="/api/v1", tags=["Pal AI Assistant"])
 
 # Test endpoints removed - was causing import issues
 
