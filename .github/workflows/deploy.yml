@@ -232,22 +232,29 @@ jobs:
         # Small delay to ensure cleanup is complete
         sleep 2
         
-        # Build and start services (docker-compose will create fresh networks)
-        echo "Building and starting services..."
-        docker-compose build --no-cache
+        # Build and start services with explicit project name to avoid conflicts
+        echo "Building and starting services with project name..."
+        PROJECT_NAME="skinsense-$(date +%s)"
+        echo "Using project name: $PROJECT_NAME"
         
-        # Use --force-recreate to ensure fresh containers and networks
-        docker-compose up -d --force-recreate --remove-orphans
+        # Build with explicit project name
+        docker-compose -p $PROJECT_NAME build --no-cache
+        
+        # Start with explicit project name and force recreate
+        docker-compose -p $PROJECT_NAME up -d --force-recreate --remove-orphans
+        
+        # Store project name for future reference
+        echo $PROJECT_NAME > ~/.current_project_name
         
         # Wait for services to start
         echo "Waiting for services to start..."
         sleep 15
         
         echo "Checking container status..."
-        docker-compose ps
+        docker-compose -p $PROJECT_NAME ps
         
         echo "Fetching logs..."
-        docker-compose logs --tail=50
+        docker-compose -p $PROJECT_NAME logs --tail=50
         
         echo "✅ Docker Compose deployment completed!"
         
