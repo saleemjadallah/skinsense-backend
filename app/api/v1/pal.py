@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 
 from app.models.user import UserModel
-from app.api.v1.auth import get_current_user
+from app.api.deps import get_current_active_user
 from app.services.pal_service import pal_service
 import logging
 
@@ -35,7 +35,7 @@ class ConversationStarter(BaseModel):
 @router.post("/chat", response_model=ChatResponse)
 async def chat_with_pal(
     message: ChatMessage,
-    current_user: UserModel = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_active_user)
 ) -> ChatResponse:
     """
     Send a message to Pal and get a response
@@ -71,7 +71,7 @@ async def chat_with_pal(
 async def get_chat_history(
     session_id: Optional[str] = None,
     limit: int = 50,
-    current_user: UserModel = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_active_user)
 ) -> Dict[str, Any]:
     """
     Get chat history for the current user
@@ -124,7 +124,7 @@ async def get_chat_history(
 @router.delete("/history")
 async def clear_chat_history(
     session_id: Optional[str] = None,
-    current_user: UserModel = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_active_user)
 ) -> Dict[str, str]:
     """
     Clear chat history for the current user
@@ -160,7 +160,7 @@ async def clear_chat_history(
 
 @router.get("/suggestions", response_model=List[ConversationStarter])
 async def get_conversation_starters(
-    current_user: UserModel = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_active_user)
 ) -> List[ConversationStarter]:
     """
     Get personalized conversation starters based on user's profile and recent activity
@@ -187,7 +187,7 @@ async def submit_chat_feedback(
     session_id: str,
     message_index: int,
     helpful: bool,
-    current_user: UserModel = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_active_user)
 ) -> Dict[str, str]:
     """
     Submit feedback on whether Pal's response was helpful
@@ -231,7 +231,7 @@ async def submit_chat_feedback(
 
 @router.get("/stats")
 async def get_pal_stats(
-    current_user: UserModel = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_active_user)
 ) -> Dict[str, Any]:
     """
     Get user's Pal interaction statistics
