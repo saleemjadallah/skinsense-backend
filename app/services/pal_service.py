@@ -109,9 +109,16 @@ class PalService:
     """
     
     def __init__(self):
-        self.client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
-        self.chat_collection = db.pal_chats
-        self.session_collection = db.pal_sessions
+        try:
+            self.client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+            self.chat_collection = db.pal_chats
+            self.session_collection = db.pal_sessions
+        except Exception as e:
+            logger.error(f"Error initializing PalService: {e}")
+            # Still allow service to initialize even if OpenAI fails
+            self.client = None
+            self.chat_collection = db.pal_chats
+            self.session_collection = db.pal_sessions
         
     @track_ai_service("openai", "pal_chat")
     def chat_with_pal(
@@ -132,6 +139,11 @@ class PalService:
             Dict containing Pal's response and metadata
         """
         try:
+            # Check if OpenAI client is available
+            if self.client is None:
+                logger.error("OpenAI client not initialized")
+                return self._get_fallback_response(message)
+            
             # Get user context
             user_context = self._get_user_context(user_id)
             
