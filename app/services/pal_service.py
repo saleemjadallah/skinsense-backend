@@ -283,23 +283,30 @@ class PalService:
         Gather user context for personalized responses
         """
         try:
-            user = UserModel.get_by_id(user_id)
+            # Get user from database
+            user = self.db.users.find_one({"_id": ObjectId(user_id)})
             if not user:
                 return {}
             
+            # Extract profile data safely
+            profile = user.get("profile", {})
             context = {
                 "profile": {
-                    "skin_type": user.profile.skin_type if user.profile else None,
-                    "age_range": user.profile.age_range if user.profile else None,
-                    "gender": user.profile.gender if user.profile else None,
-                    "skin_concerns": user.profile.skin_concerns if user.profile else []
+                    "skin_type": profile.get("skin_type"),
+                    "age_range": profile.get("age_range"),
+                    "gender": profile.get("gender"),
+                    "skin_concerns": profile.get("skin_concerns", [])
                 }
             }
             
             # Get latest skin analysis
             analysis_collection = self.db.skin_analyses
+            # Try both ObjectId and string formats for compatibility
             latest_analysis = analysis_collection.find_one(
-                {"user_id": ObjectId(user_id)},
+                {"$or": [
+                    {"user_id": ObjectId(user_id) if ObjectId.is_valid(user_id) else None},
+                    {"user_id": user_id}
+                ]},
                 sort=[("created_at", -1)]
             )
             
@@ -320,7 +327,10 @@ class PalService:
             routine_collection = self.db.routine_completions
             today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
             recent_completions = routine_collection.count_documents({
-                "user_id": ObjectId(user_id),
+                "$or": [
+                    {"user_id": ObjectId(user_id) if ObjectId.is_valid(user_id) else None},
+                    {"user_id": user_id}
+                ],
                 "completed_at": {"$gte": today - timedelta(days=7)}
             })
             context["streak"] = recent_completions
@@ -328,7 +338,13 @@ class PalService:
             # Get active goals
             goals_collection = self.db.goals
             active_goals = list(goals_collection.find(
-                {"user_id": ObjectId(user_id), "status": "active"}
+                {
+                    "$or": [
+                        {"user_id": ObjectId(user_id) if ObjectId.is_valid(user_id) else None},
+                        {"user_id": user_id}
+                    ], 
+                    "status": "active"
+                }
             ).limit(3))
             
             if active_goals:
@@ -367,8 +383,8 @@ class PalService:
         """
         try:
             self.session_collection.insert_one({
-                "_id": ObjectId(session_id),
-                "user_id": ObjectId(user_id),
+                "_id": session_id,  # Keep as string
+                "user_id": user_id,  # Keep as string
                 "created_at": datetime.utcnow(),
                 "last_activity": datetime.utcnow(),
                 "message_count": 0
@@ -388,7 +404,7 @@ class PalService:
         """
         try:
             self.chat_collection.insert_one({
-                "user_id": ObjectId(user_id),
+                "user_id": user_id,  # Keep as string, don't convert to ObjectId
                 "session_id": session_id,
                 "user_message": user_message,
                 "pal_response": pal_response,
