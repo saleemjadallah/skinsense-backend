@@ -194,7 +194,6 @@ def create_indexes():
     try:
         # User indexes
         db.database.users.create_index("email", unique=True)
-        db.database.users.create_index("username")  # Not unique - usernames can be duplicate
         
         # Skin analysis indexes
         db.database.skin_analyses.create_index([("user_id", 1), ("created_at", -1)])
@@ -285,3 +284,5 @@ def create_indexes():
         
     except Exception as e:
         logger.error(f"Error creating indexes: {e}")
+
+connect_to_mongo()

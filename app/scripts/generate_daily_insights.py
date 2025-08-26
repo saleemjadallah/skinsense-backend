@@ -19,7 +19,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from app.database import db
-from app.services.insights_service import insights_service
+from app.services.insights_service import get_insights_service
 from app.core.config import settings
 import logging
 
@@ -59,6 +59,7 @@ async def generate_insights_for_all_users():
             
             try:
                 # Generate insights for user
+                insights_service = get_insights_service()
                 insights = await insights_service.generate_daily_insights(user_id)
                 
                 if insights:
@@ -100,6 +101,7 @@ async def generate_insights_for_user(user_id: str):
     """Generate insights for a specific user (useful for testing)"""
     try:
         logger.info(f"Generating insights for user {user_id}")
+        insights_service = get_insights_service()
         insights = await insights_service.generate_daily_insights(user_id)
         
         if insights:

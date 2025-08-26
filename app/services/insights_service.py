@@ -40,12 +40,10 @@ class InsightsService:
     def _ensure_db(self):
         """Ensure database connection is initialized"""
         if self.db is None:
-            self.db = get_database()
-            if self.db is None:
-                from ..database import db as database_instance
-                self.db = database_instance.database
+            from ..database import db as database_instance
+            self.db = database_instance.database
     
-    def generate_daily_insights(self, user_id: str) -> DailyInsights:
+    async def generate_daily_insights(self, user_id: str) -> DailyInsights:
         """Generate 3 personalized insights for a user"""
         try:
             logger.info(f"[INSIGHTS_SERVICE] Generating daily insights for user: {user_id}")
