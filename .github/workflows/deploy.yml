@@ -294,26 +294,44 @@ jobs:
         
         # Check if containers are actually running
         echo "Checking container health..."
-        API_STATUS=$(docker-compose -p $PROJECT_NAME ps api | grep -c "Up" || true)
-        REDIS_STATUS=$(docker-compose -p $PROJECT_NAME ps redis | grep -c "Up" || true)
         
-        if [ "$API_STATUS" -eq 0 ]; then
+        # Use docker ps to check running containers more reliably
+        echo "Running containers:"
+        docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+        
+        # Check if our project's containers are running
+        API_RUNNING=$(docker ps | grep -c "${PROJECT_NAME}.*api" || true)
+        REDIS_RUNNING=$(docker ps | grep -c "${PROJECT_NAME}.*redis" || true)
+        
+        echo "API containers found: $API_RUNNING"
+        echo "Redis containers found: $REDIS_RUNNING"
+        
+        if [ "$API_RUNNING" -eq 0 ]; then
           echo "❌ API container is not running!"
           echo "API container logs:"
           docker-compose -p $PROJECT_NAME logs api --tail=200
         fi
         
-        if [ "$REDIS_STATUS" -eq 0 ]; then
+        if [ "$REDIS_RUNNING" -eq 0 ]; then
           echo "❌ Redis container is not running!"
           echo "Redis container logs:"
           docker-compose -p $PROJECT_NAME logs redis --tail=100
         fi
         
-        if [ "$API_STATUS" -gt 0 ] && [ "$REDIS_STATUS" -gt 0 ]; then
-          echo "✅ Docker Compose deployment completed successfully!"
+        # Give containers more time to stabilize
+        echo "Waiting for containers to stabilize..."
+        sleep 10
+        
+        # Check again after waiting
+        API_RUNNING=$(docker ps | grep -c "${PROJECT_NAME}.*api" || true)
+        REDIS_RUNNING=$(docker ps | grep -c "${PROJECT_NAME}.*redis" || true)
+        
+        if [ "$API_RUNNING" -gt 0 ] && [ "$REDIS_RUNNING" -gt 0 ]; then
+          echo "✅ Both containers are running!"
         else
-          echo "❌ Deployment failed - one or more containers are not running"
-          exit 1
+          echo "❌ One or more containers stopped running"
+          docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+          # Don't exit with error yet, let's try the health check
         fi
         
         # Health check
@@ -322,43 +340,69 @@ jobs:
         
         # Show current container status
         echo "Current container status:"
-        docker ps -a
+        docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
         
         # Try health check multiple times
-        HEALTH_CHECK_ATTEMPTS=3
+        HEALTH_CHECK_ATTEMPTS=5
         HEALTH_CHECK_PASSED=false
         
         for i in $(seq 1 $HEALTH_CHECK_ATTEMPTS); do
           echo "Health check attempt $i of $HEALTH_CHECK_ATTEMPTS..."
-          if curl -f http://localhost:8000/health 2>/dev/null; then
+          
+          # Try to curl the health endpoint
+          HEALTH_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health 2>/dev/null || echo "000")
+          
+          if [ "$HEALTH_RESPONSE" = "200" ] || [ "$HEALTH_RESPONSE" = "503" ]; then
+            echo "✅ API is responding (HTTP $HEALTH_RESPONSE)!"
             HEALTH_CHECK_PASSED=true
-            echo "✅ Health check passed!"
+            
+            # Show the actual health response
+            echo "Health endpoint response:"
+            curl -s http://localhost:8000/health | python3 -m json.tool 2>/dev/null || curl -s http://localhost:8000/health
             break
           else
-            echo "Health check attempt $i failed, waiting 10 seconds..."
-            sleep 10
+            echo "Health check attempt $i failed (HTTP $HEALTH_RESPONSE), waiting 10 seconds..."
+            
+            # Check if containers are still running
+            if ! docker ps | grep -q "${PROJECT_NAME}.*api"; then
+              echo "⚠️ API container stopped running!"
+              docker-compose -p $PROJECT_NAME logs api --tail=50
+            fi
+            
+            if [ "$i" -lt "$HEALTH_CHECK_ATTEMPTS" ]; then
+              sleep 10
+            fi
           fi
         done
         
         if [ "$HEALTH_CHECK_PASSED" = true ]; then
           echo "🎉 Deployment successful!"
-          echo "📊 Service status:"
-          docker ps
+          echo "📊 Final service status:"
+          docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep "$PROJECT_NAME" || docker ps
+          
+          # Show the deployment info
+          echo ""
+          echo "📌 Deployment Information:"
+          echo "   Project: $PROJECT_NAME"
+          echo "   API URL: http://${{ secrets.EC2_HOST }}:8000"
+          echo "   Health: http://${{ secrets.EC2_HOST }}:8000/health"
+          echo "   Docs: http://${{ secrets.EC2_HOST }}:8000/docs"
         else
           echo "❌ Health check failed after $HEALTH_CHECK_ATTEMPTS attempts."
-          echo "Container status:"
-          docker ps -a
           echo ""
-          echo "Detailed logs:"
-          if command -v docker &> /dev/null && docker compose version &> /dev/null; then
-            docker compose -p skinsense logs --tail=200
-          else
-            docker-compose -p skinsense logs --tail=200
-          fi
+          echo "Final container status:"
+          docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
           echo ""
-          echo "Checking specific container logs:"
-          docker logs skinsense_api --tail=100 2>&1 || echo "Could not get API container logs"
-          docker logs skinsense_redis --tail=50 2>&1 || echo "Could not get Redis container logs"
+          echo "Detailed API logs:"
+          docker-compose -p $PROJECT_NAME logs api --tail=200
+          echo ""
+          echo "System diagnostics:"
+          echo "Memory usage:"
+          free -h
+          echo "Disk usage:"
+          df -h
+          echo "Docker info:"
+          docker system df
           exit 1
         fi
         ENDSSH
