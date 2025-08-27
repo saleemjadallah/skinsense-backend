@@ -107,15 +107,23 @@ ssh -i "$PEM_FILE" "$EC2_USER@$EC2_HOST" << 'ENDSSH'
     
     # Stop existing containers
     echo "🛑 Stopping existing containers..."
-    docker network rm skinsense-backend_app_network || true
-    docker-compose down || true
+    docker-compose down --volumes --remove-orphans 2>/dev/null || true
+    
+    # Remove conflicting networks
+    echo "🧹 Cleaning up Docker networks..."
+    docker network rm skinsense-backend_app_network 2>/dev/null || true
+    docker network rm skinsense-backend_default 2>/dev/null || true
+    
+    # Set unique project name for this deployment
+    PROJECT_NAME="skinsense-${GITHUB_RUN_ID:-$(date +%s)}"
+    echo $PROJECT_NAME > ~/.current_project_name
     
     # Build and start containers
     echo "🏗️ Building Docker images..."
-    docker-compose build --no-cache
+    docker-compose -p "$PROJECT_NAME" build --no-cache
     
     echo "🚀 Starting containers..."
-    docker-compose up -d
+    docker-compose -p "$PROJECT_NAME" up -d --force-recreate --remove-orphans
     
     # Wait for services to start
     echo "⏳ Waiting for services to start..."
@@ -143,7 +151,7 @@ ssh -i "$PEM_FILE" "$EC2_USER@$EC2_HOST" << 'ENDSSH'
     
     # Show container status
     echo "📊 Container status:"
-    docker-compose ps
+    docker-compose -p "$PROJECT_NAME" ps
     
     echo "✅ Deployment complete!"
 ENDSSH

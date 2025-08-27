@@ -1,6 +1,6 @@
 """
 Pal AI Service - The friendly AI mascot for SkinSense
-Uses GPT-5 (ChatGPT) for personalized skincare guidance
+Uses GPT-5-mini for fast, personalized skincare guidance
 """
 
 import openai
@@ -169,14 +169,15 @@ class PalService:
             prompt_tokens = len(prompt_text.split()) * 1.3
             ai_service_tokens.labels(service="openai", type="prompt").inc(int(prompt_tokens))
             
-            # Call GPT-5 (using gpt-4-turbo as the latest available model)
+            # Call GPT-5-mini for faster, cost-efficient responses
             response = self.client.chat.completions.create(
-                model="gpt-4-turbo-preview",  # Will be updated to gpt-5 when available
+                model="gpt-5-mini",  # Fast, cost-efficient model for well-defined tasks
                 messages=messages,
-                temperature=0.8,
-                max_tokens=500,
+                temperature=0.7,  # Slightly lower for more consistent responses
+                max_tokens=400,   # Reduced for faster responses
                 presence_penalty=0.1,
-                frequency_penalty=0.1
+                frequency_penalty=0.1,
+                timeout=10.0  # 10 second timeout to prevent hanging
             )
             
             # Track completion tokens
