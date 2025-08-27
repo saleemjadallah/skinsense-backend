@@ -92,12 +92,12 @@ jobs:
       run: |
         scp -i ~/.ssh/ec2_key.pem deployment.tar.gz ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/
     
-    - name: Deploy on EC2 with Docker Compose
+    - name: Deploy on EC2 with Zero-Downtime Strategy
       run: |
         ssh -i ~/.ssh/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'ENDSSH'
-        echo "🚀 Starting deployment..."
+        echo "🚀 Starting zero-downtime deployment..."
         
-        # STEP 1: Upgrade docker-compose to fix ContainerConfig bug
+        # STEP 1: Install/Update docker-compose if needed
         echo "📦 Step 1: Checking and upgrading docker-compose..."
         COMPOSE_VERSION=$(docker-compose --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "0.0.0")
         echo "Current docker-compose version: $COMPOSE_VERSION"
@@ -114,14 +114,11 @@ jobs:
         
         echo "Docker Compose updated to: $(docker-compose version)"
         
-        # STEP 2: Clean up with proper docker-compose down
-        echo "📦 Step 2: Cleaning up existing deployment..."
-        # Use --remove-orphans to clean up any services removed from compose file
-        cd ~/skinsense-backend 2>/dev/null && docker-compose down --volumes --remove-orphans 2>/dev/null || true
-        # Also try with project name in case it's different
-        cd ~/skinsense-backend 2>/dev/null && docker-compose -p skinsense-backend down --volumes --remove-orphans 2>/dev/null || true
+        # STEP 2: Set project name
+        PROJECT_NAME="skinsense-backend"
+        echo "📦 Step 2: Using project name: $PROJECT_NAME"
         
-        # STEP 3: Nuclear cleanup of corrupted containers
+        # STEP 3: Prepare new deployment directory
         echo "📦 Step 3: Removing corrupted containers, volumes, and networks..."
         
         # Stop and remove all containers related to skinsense
