@@ -9,7 +9,7 @@ import json
 from datetime import datetime
 
 # API Configuration
-API_BASE = "http://54.211.215.150:8000"
+API_BASE = "http://localhost:8000"  # Testing locally first
 EMAIL = "support@skinsense.app"
 PASSWORD = "Olaabdel@88aa"
 
@@ -19,10 +19,11 @@ def login():
     
     response = requests.post(
         f"{API_BASE}/api/v1/auth/login",
-        data={
-            "username": EMAIL,
+        json={
+            "email": EMAIL,
             "password": PASSWORD
-        }
+        },
+        headers={"Content-Type": "application/json"}
     )
     
     if response.status_code == 200:

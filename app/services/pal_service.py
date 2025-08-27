@@ -1,6 +1,6 @@
 """
 Pal AI Service - The friendly AI mascot for SkinSense
-Uses GPT-5-mini for fast, personalized skincare guidance
+Uses GPT-4o-mini for fast, personalized skincare guidance
 """
 
 import openai
@@ -157,29 +157,39 @@ class PalService:
                 session_id = str(ObjectId())
                 self._create_session(user_id, session_id)
             
-            # Build input for Responses API
-            # Combine system prompt and conversation into a single input
-            input_text = f"{PAL_SYSTEM_PROMPT}\n\n"
+            # Build messages for chat completion
+            messages = [
+                {"role": "system", "content": PAL_SYSTEM_PROMPT}
+            ]
+            
+            # Add user context
             if user_context:
-                input_text += f"User Context:\n{self._format_user_context(user_context)}\n\n"
+                messages.append({
+                    "role": "system",
+                    "content": f"User Context:\n{self._format_user_context(user_context)}"
+                })
             
-            # Add conversation history
+            # Add recent conversation history
             for chat in conversation_history[-5:]:  # Last 5 messages for context
-                input_text += f"User: {chat.get('user_message', '')}\n"
-                input_text += f"Pal: {chat.get('pal_response', '')}\n\n"
+                messages.append({"role": "user", "content": chat.get("user_message", "")})
+                messages.append({"role": "assistant", "content": chat.get("pal_response", "")})
             
-            input_text += f"User: {message}\n"
+            # Add current message
+            messages.append({"role": "user", "content": message})
             
-            # Call GPT-5-mini using new Responses API
-            response = self.client.responses.create(
-                model="gpt-5-mini",  # Fast, cost-efficient model
-                input=input_text,
-                reasoning={"effort": "minimal"},  # Minimal reasoning for speed
-                text={"verbosity": "low"}  # Low verbosity for concise responses
+            # Call GPT-4o-mini for fast, cost-efficient responses
+            response = self.client.chat.completions.create(
+                model="gpt-4o-mini",  # Fast, cost-efficient model
+                messages=messages,
+                temperature=0.7,
+                max_tokens=400,
+                presence_penalty=0.1,
+                frequency_penalty=0.1,
+                timeout=10.0
             )
             
-            # Extract response from new Responses API format
-            pal_response = response.output_text
+            # Extract response
+            pal_response = response.choices[0].message.content
             
             # Save chat to history
             self._save_chat_message(
