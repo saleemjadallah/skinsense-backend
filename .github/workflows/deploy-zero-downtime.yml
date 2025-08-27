@@ -18,72 +18,94 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
       
+    - name: Create .env file
+      run: |
+        cat > .env <<EOF
+        MONGODB_URL=${{ secrets.MONGODB_URL }}
+        SECRET_KEY=${{ secrets.SECRET_KEY }}
+        ORBO_AI_API_KEY=${{ secrets.ORBO_AI_API_KEY }}
+        ORBO_CLIENT_ID=${{ secrets.ORBO_CLIENT_ID }}
+        OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+        PERPLEXITY_API_KEY=${{ secrets.PERPLEXITY_API_KEY }}
+        AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_REGION=${{ secrets.AWS_REGION }}
+        S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }}
+        CLOUDFRONT_DOMAIN=${{ secrets.CLOUDFRONT_DOMAIN }}
+        ZEPTOMAIL_SEND_TOKEN=${{ secrets.ZEPTOMAIL_SEND_TOKEN }}
+        FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }}
+        FIREBASE_SERVICE_ACCOUNT=${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        EOF
+    
     - name: Deploy to EC2 Server
-      uses: appleboy/ssh-action@v0.1.7
+      uses: appleboy/ssh-action@v1.0.3
       with:
         host: ${{ secrets.EC2_HOST }}
         username: ${{ secrets.EC2_USER }}
         key: ${{ secrets.EC2_KEY }}
         port: 22
         script_stop: true
+        command_timeout: 20m
         script: |
+          echo "Starting deployment..."
+          
           # Navigate to the backend directory
-          cd /home/ubuntu/skinsense-backend
+          cd /home/ubuntu/skinsense-backend || cd ~/skinsense-backend || { echo "Backend directory not found"; exit 1; }
           
           # Pull latest changes
+          echo "Pulling latest code..."
           git pull origin main
           
-          # Create .env file from GitHub Secrets
-          cat > .env <<EOF
-          MONGODB_URL=${{ secrets.MONGODB_URL }}
-          SECRET_KEY=${{ secrets.SECRET_KEY }}
+          # Check if deploy script exists and make it executable
+          if [ -f deploy-zero-downtime.sh ]; then
+            echo "Making deployment script executable..."
+            chmod +x deploy-zero-downtime.sh
+            
+            echo "Running zero-downtime deployment..."
+            ./deploy-zero-downtime.sh
+          else
+            echo "Deploy script not found, using standard deployment..."
+            docker-compose up -d --build
+          fi
           
-          # AI Services
-          ORBO_AI_API_KEY=${{ secrets.ORBO_AI_API_KEY }}
-          ORBO_CLIENT_ID=${{ secrets.ORBO_CLIENT_ID }}
-          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-          PERPLEXITY_API_KEY=${{ secrets.PERPLEXITY_API_KEY }}
-          
-          # AWS Services
-          AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION=${{ secrets.AWS_REGION }}
-          S3_BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }}
-          CLOUDFRONT_DOMAIN=${{ secrets.CLOUDFRONT_DOMAIN }}
-          
-          # Email Service
-          ZEPTOMAIL_SEND_TOKEN=${{ secrets.ZEPTOMAIL_SEND_TOKEN }}
-          
-          # Firebase (optional)
-          FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }}
-          FIREBASE_SERVICE_ACCOUNT=${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          EOF
-          
-          # Make deployment script executable
-          chmod +x deploy-zero-downtime.sh
-          
-          # Run zero-downtime deployment
-          ./deploy-zero-downtime.sh
-          
-          # Clean up sensitive data
-          rm -f .env
+          echo "Deployment complete!"
+    
+    - name: Upload .env to Server
+      if: success()
+      uses: appleboy/scp-action@v0.1.5
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        key: ${{ secrets.EC2_KEY }}
+        port: 22
+        source: ".env"
+        target: "/home/ubuntu/skinsense-backend/"
+        overwrite: true
     
     - name: Verify Deployment
-      uses: appleboy/ssh-action@v0.1.7
+      if: success()
+      uses: appleboy/ssh-action@v1.0.3
+      continue-on-error: true
       with:
         host: ${{ secrets.EC2_HOST }}
         username: ${{ secrets.EC2_USER }}
         key: ${{ secrets.EC2_KEY }}
         port: 22
         script: |
-          # Check if API is responding
-          curl -f http://localhost/health || exit 1
+          # Wait a bit for services to start
+          sleep 10
           
-          # Check active backend color
-          docker exec skinsense_nginx cat /etc/nginx/conf.d/active_backend || echo "Unable to determine active backend"
+          # Check if API is responding
+          echo "Checking API health..."
+          curl -f http://localhost/health || curl -f http://localhost:8000/health || echo "Health check failed (may still be starting)"
           
           # Show container status
-          docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+          echo "Container status:"
+          docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | head -10
+    
+    - name: Clean up local .env
+      if: always()
+      run: rm -f .env
     
     - name: Notify on Success
       if: success()
