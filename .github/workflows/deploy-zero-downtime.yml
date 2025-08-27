@@ -25,6 +25,7 @@ jobs:
         cp Dockerfile deployment/
         cp docker-compose.yml deployment/
         cp docker-compose.prod.yml deployment/ 2>/dev/null || true
+        cp nginx.conf deployment/ 2>/dev/null || true
         cp .dockerignore deployment/
         
         # Check if critical secrets are set
@@ -83,12 +84,19 @@ jobs:
     
     - name: Copy deployment package to EC2
       run: |
-        scp -i ~/.ssh/ec2_key.pem deployment.tar.gz ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/
+        echo "📦 Copying deployment package to EC2..."
+        scp -i ~/.ssh/ec2_key.pem deployment.tar.gz ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/deployment.tar.gz
     
     - name: Deploy with Zero-Downtime Strategy
       run: |
         ssh -i ~/.ssh/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'ENDSSH'
         echo "🚀 Starting zero-downtime deployment..."
+        
+        # Verify deployment package exists
+        if [ ! -f ~/deployment.tar.gz ]; then
+          echo "❌ Deployment package not found!"
+          exit 1
+        fi
         
         # Set project name
         PROJECT_NAME="skinsense-backend"
@@ -98,7 +106,17 @@ jobs:
         cd ~/skinsense-backend-new
         
         # Extract deployment package
+        echo "📦 Extracting deployment package..."
         tar -xzf ~/deployment.tar.gz
+        
+        # Verify extraction was successful
+        if [ ! -f docker-compose.yml ]; then
+          echo "❌ docker-compose.yml not found after extraction!"
+          ls -la
+          exit 1
+        fi
+        
+        # Clean up tarball
         rm ~/deployment.tar.gz
         
         # Verify docker-compose.yml exists
