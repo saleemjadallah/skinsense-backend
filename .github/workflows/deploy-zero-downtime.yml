@@ -82,19 +82,30 @@ jobs:
         chmod 600 ~/.ssh/ec2_key.pem
         ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
     
-    - name: Copy deployment package to EC2
+    - name: Copy and Deploy with Zero-Downtime Strategy
       run: |
         echo "📦 Copying deployment package to EC2..."
         scp -i ~/.ssh/ec2_key.pem deployment.tar.gz ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/deployment.tar.gz
-    
-    - name: Deploy with Zero-Downtime Strategy
-      run: |
+        
+        echo "Verifying file transfer..."
+        ssh -i ~/.ssh/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "ls -la ~/deployment.tar.gz"
+        
+        echo "Starting deployment..."
         ssh -i ~/.ssh/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'ENDSSH'
         echo "🚀 Starting zero-downtime deployment..."
+        
+        # Debug info
+        echo "Current user: $(whoami)"
+        echo "Home directory: $HOME"
+        echo "Files in home directory:"
+        ls -la ~/ | grep deployment || echo "No deployment files found"
         
         # Verify deployment package exists
         if [ ! -f ~/deployment.tar.gz ]; then
           echo "❌ Deployment package not found!"
+          echo "Current directory: $(pwd)"
+          echo "All files in home:"
+          ls -la ~/
           exit 1
         fi
         

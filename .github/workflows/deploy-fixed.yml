@@ -1,4 +1,4 @@
-name: Simple Zero-Downtime Deploy
+name: Fixed Zero-Downtime Deploy
 
 on:
   push:
@@ -22,7 +22,7 @@ jobs:
         cp Dockerfile deployment/
         cp docker-compose.yml deployment/
         cp nginx.conf deployment/ 2>/dev/null || true
-        cp .dockerignore deployment/
+        cp .dockerignore deployment/ 2>/dev/null || echo "# Dockerignore" > deployment/.dockerignore
         
         # Create .env file
         cat > deployment/.env << EOF
@@ -56,7 +56,11 @@ jobs:
           echo "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}" | base64 -d > deployment/credentials/firebase-service-account.json
         fi
         
+        # Create tarball
         tar -czf deployment.tar.gz -C deployment .
+        
+        # Verify tarball was created
+        ls -la deployment.tar.gz
     
     - name: Setup SSH
       run: |
@@ -65,120 +69,146 @@ jobs:
         chmod 600 ~/.ssh/ec2_key.pem
         ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
     
-    - name: Copy and Deploy to EC2
+    - name: Transfer and Deploy
       run: |
-        # Copy deployment package
-        echo "📦 Copying deployment package to EC2..."
-        scp -i ~/.ssh/ec2_key.pem deployment.tar.gz ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/deployment.tar.gz
+        # Use a more robust approach - transfer to /tmp first
+        echo "📦 Transferring deployment package to EC2..."
+        scp -v -i ~/.ssh/ec2_key.pem deployment.tar.gz ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/deployment.tar.gz
         
-        # Verify copy was successful
-        ssh -i ~/.ssh/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "ls -la ~/deployment.tar.gz"
-        
-        # Deploy with zero downtime
+        # Now run deployment script
         ssh -i ~/.ssh/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'ENDSSH'
         set -e
         
-        echo "🚀 Starting zero-downtime deployment..."
+        echo "🚀 Starting deployment..."
         
-        # Debug: Check current directory and files
-        echo "Current directory: $(pwd)"
-        echo "Home directory contents:"
-        ls -la ~/ | grep deployment || echo "No deployment files found"
-        
-        # Verify deployment package exists
-        if [ ! -f ~/deployment.tar.gz ]; then
-          echo "❌ Deployment package not found in home directory!"
-          echo "Checking current directory:"
-          ls -la
+        # Move deployment package from /tmp to home
+        if [ -f /tmp/deployment.tar.gz ]; then
+          echo "✅ Found deployment package in /tmp"
+          mv /tmp/deployment.tar.gz ~/deployment.tar.gz
+        else
+          echo "❌ Deployment package not found in /tmp!"
           exit 1
         fi
+        
+        # Verify it's in home directory now
+        if [ ! -f ~/deployment.tar.gz ]; then
+          echo "❌ Failed to move deployment package to home directory!"
+          exit 1
+        fi
+        
+        echo "✅ Deployment package ready"
         
         # Constants
         PROJECT_NAME="skinsense-backend"
         DEPLOY_DIR="$HOME/skinsense-backend"
         NEW_DIR="$HOME/skinsense-backend-new"
         
+        # Clean up any previous failed deployment
+        rm -rf $NEW_DIR
+        
         # Extract new deployment
         mkdir -p $NEW_DIR
         cd $NEW_DIR
+        
         echo "📦 Extracting deployment package..."
         tar -xzf ~/deployment.tar.gz
         
         # Verify extraction
         if [ ! -f docker-compose.yml ]; then
           echo "❌ docker-compose.yml not found after extraction!"
+          echo "Extracted files:"
           ls -la
           exit 1
         fi
         
+        echo "✅ Extraction successful"
         rm ~/deployment.tar.gz
         
         # Build new images
-        echo "📦 Building new Docker images..."
-        docker-compose build --quiet
+        echo "🔨 Building Docker images..."
+        docker-compose build
         
-        # Check if old deployment exists
+        # Check if old deployment exists and is running
+        OLD_RUNNING=false
         if [ -d "$DEPLOY_DIR" ] && docker ps | grep -q "$PROJECT_NAME"; then
-          echo "🔄 Performing rolling update..."
+          OLD_RUNNING=true
+          echo "📊 Existing deployment detected"
+        fi
+        
+        if [ "$OLD_RUNNING" = true ]; then
+          echo "🔄 Performing zero-downtime update..."
           
-          # Start new containers with green suffix
-          docker-compose -p ${PROJECT_NAME}-green up -d
+          # Start new containers with temporary name
+          docker-compose -p ${PROJECT_NAME}-new up -d
           
-          # Wait for new containers to be healthy
-          echo "⏳ Waiting for new containers to be healthy..."
-          sleep 30
+          # Wait for health check
+          echo "⏳ Waiting for new deployment to be healthy..."
+          ATTEMPTS=0
+          MAX_ATTEMPTS=30
+          HEALTHY=false
           
-          # Check health of new deployment
-          if docker exec ${PROJECT_NAME}-green-api-1 curl -s http://localhost:8000/health > /dev/null 2>&1; then
-            echo "✅ New deployment is healthy!"
+          while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
+            if curl -s http://localhost:8000/health > /dev/null 2>&1; then
+              echo "✅ New deployment is healthy!"
+              HEALTHY=true
+              break
+            fi
+            ATTEMPTS=$((ATTEMPTS + 1))
+            echo "Attempt $ATTEMPTS/$MAX_ATTEMPTS - Waiting for health check..."
+            sleep 5
+          done
+          
+          if [ "$HEALTHY" = true ]; then
+            # Stop old deployment gracefully
+            echo "📦 Stopping old deployment..."
+            cd $DEPLOY_DIR
+            docker-compose -p $PROJECT_NAME down --timeout 30
             
-            # Stop old deployment
-            cd $DEPLOY_DIR 2>/dev/null && docker-compose -p $PROJECT_NAME stop --timeout 30 || true
-            cd $DEPLOY_DIR 2>/dev/null && docker-compose -p $PROJECT_NAME rm -f || true
-            
-            # Switch directories
-            mv $DEPLOY_DIR ${DEPLOY_DIR}-old-$(date +%s) 2>/dev/null || true
+            # Move directories
+            mv $DEPLOY_DIR ${DEPLOY_DIR}.old.$(date +%s)
             mv $NEW_DIR $DEPLOY_DIR
             
             # Restart with production name
             cd $DEPLOY_DIR
-            docker-compose -p ${PROJECT_NAME}-green stop
-            docker-compose -p ${PROJECT_NAME}-green rm -f
+            docker-compose -p ${PROJECT_NAME}-new down
             docker-compose -p $PROJECT_NAME up -d
             
-            echo "✅ Rolling update complete!"
+            echo "✅ Zero-downtime update complete!"
           else
-            echo "❌ New deployment failed health check, keeping old deployment..."
-            docker-compose -p ${PROJECT_NAME}-green down
+            echo "❌ New deployment health check failed!"
+            docker-compose -p ${PROJECT_NAME}-new down
             rm -rf $NEW_DIR
             exit 1
           fi
         else
-          echo "📦 Fresh deployment..."
+          echo "📦 Fresh deployment (no existing deployment found)..."
           
-          # No existing deployment, start fresh
-          mv $DEPLOY_DIR ${DEPLOY_DIR}-old-$(date +%s) 2>/dev/null || true
+          # Move to production directory
+          [ -d "$DEPLOY_DIR" ] && mv $DEPLOY_DIR ${DEPLOY_DIR}.old.$(date +%s)
           mv $NEW_DIR $DEPLOY_DIR
           cd $DEPLOY_DIR
           
+          # Start containers
           docker-compose -p $PROJECT_NAME up -d
           
-          # Wait and check health
-          sleep 30
+          # Health check
+          echo "⏳ Waiting for deployment to be healthy..."
+          sleep 20
+          
           if curl -s http://localhost:8000/health > /dev/null 2>&1; then
-            echo "✅ Fresh deployment successful!"
+            echo "✅ Deployment is healthy!"
           else
             echo "⚠️ Health check failed but containers may still be starting..."
+            docker ps
           fi
         fi
         
         # Cleanup
         docker system prune -f > /dev/null 2>&1
-        rm -rf ${DEPLOY_DIR}-old-* 2>/dev/null || true
         
-        # Show final status
+        # Final status
         echo ""
-        echo "📊 Deployment Status:"
+        echo "📊 Final Status:"
         docker ps | grep $PROJECT_NAME || docker ps
         echo ""
         echo "🎉 Deployment complete!"
