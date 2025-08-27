@@ -1,0 +1,104 @@
+version: '3.8'
+
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: skinsense_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+    depends_on:
+      - backend-blue
+    networks:
+      - skinsense-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  backend-blue:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: skinsense_backend_blue
+    expose:
+      - "8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --timeout-keep-alive=65 --workers 2
+    env_file:
+      - .env
+    environment:
+      - SERVICE_COLOR=blue
+      - REDIS_URL=redis://redis:6379
+      - ENVIRONMENT=production
+      - DEBUG=false
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - skinsense-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  backend-green:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: skinsense_backend_green
+    expose:
+      - "8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --timeout-keep-alive=65 --workers 2
+    env_file:
+      - .env
+    environment:
+      - SERVICE_COLOR=green
+      - REDIS_URL=redis://redis:6379
+      - ENVIRONMENT=production
+      - DEBUG=false
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - skinsense-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    profiles: ["green"]  # Initially inactive
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: skinsense_redis
+    networks:
+      - skinsense-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    volumes:
+      - redis_data:/data
+
+networks:
+  skinsense-network:
+    driver: bridge
+    name: skinsense_network
+
+volumes:
+  redis_data:
+    name: skinsense_redis_data

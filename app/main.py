@@ -1,9 +1,13 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import logging
+import signal
+import sys
+import os
+import asyncio
 
 from app.core.config import settings
 from app.database import connect_to_mongo, close_mongo_connection, db
@@ -16,10 +20,22 @@ from app.core.monitoring import setup_metrics  # track_active_users
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Graceful shutdown event
+shutdown_event = asyncio.Event()
+
+def handle_shutdown_signal(signum, frame):
+    """Handle shutdown signals gracefully"""
+    logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+    shutdown_event.set()
+
+# Register signal handlers for graceful shutdown
+signal.signal(signal.SIGTERM, handle_shutdown_signal)
+signal.signal(signal.SIGINT, handle_shutdown_signal)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    logger.info("Starting SkinSense AI Backend...")
+    logger.info(f"Starting SkinSense AI Backend (Color: {os.getenv('SERVICE_COLOR', 'unknown')})...")
     connect_to_mongo()  # Now synchronous
     get_redis()  # Initialize Redis connection
     
@@ -29,9 +45,15 @@ async def lifespan(app: FastAPI):
     yield
     
     # Shutdown
-    logger.info("Shutting down...")
+    logger.info("Initiating graceful shutdown...")
+    
+    # Give time for nginx to stop routing traffic
+    await asyncio.sleep(2)
+    
+    logger.info("Closing database connections...")
     close_mongo_connection()  # Now synchronous
     close_redis()  # Close Redis connection
+    
     logger.info("Application shutdown complete")
 
 app = FastAPI(
@@ -91,18 +113,51 @@ app.include_router(pal.router, prefix="/api/v1", tags=["Pal AI Assistant"])
 # Test endpoints removed - was causing import issues
 
 # Health check endpoint
-@app.get("/health")
+@app.get("/health", status_code=status.HTTP_200_OK)
 async def health_check():
-    """Health check endpoint"""
-    # Check database connection
-    db_status = "connected" if db.database is not None else "disconnected"
+    """Enhanced health check endpoint for zero-downtime deployment"""
+    health_status = {"status": "healthy"}
+    
+    try:
+        # Check database connection with a ping
+        db_status = "healthy"
+        try:
+            # Perform a simple database operation to verify connection
+            db.client.admin.command('ping')
+        except Exception as e:
+            logger.error(f"Database health check failed: {e}")
+            db_status = "unhealthy"
+            health_status["status"] = "degraded"
+    except Exception as e:
+        db_status = "unhealthy"
+        health_status["status"] = "degraded"
+    
+    # Check Redis connection
+    redis_status = "healthy"
+    try:
+        redis = get_redis()
+        if redis:
+            redis.ping()
+        else:
+            redis_status = "not_configured"
+    except Exception as e:
+        logger.error(f"Redis health check failed: {e}")
+        redis_status = "unhealthy"
+        if health_status["status"] != "unhealthy":
+            health_status["status"] = "degraded"
+    
+    # Check if shutting down
+    if shutdown_event.is_set():
+        health_status["status"] = "shutting_down"
     
     return {
-        "status": "healthy" if db_status == "connected" else "degraded",
+        **health_status,
         "service": settings.APP_NAME,
         "version": settings.APP_VERSION,
+        "color": os.getenv("SERVICE_COLOR", "unknown"),
         "environment": "development" if settings.DEBUG else "production",
         "database": db_status,
+        "redis": redis_status,
         "mongodb_url_set": bool(settings.MONGODB_URL),
         "database_name": settings.DATABASE_NAME if settings.DATABASE_NAME else "not_set"
     }

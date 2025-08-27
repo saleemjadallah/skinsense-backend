@@ -20,18 +20,21 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --no-cache-dir gunicorn
 
-# Copy application code
+# Copy application code and entrypoint script
 COPY app app
 COPY scripts scripts
+COPY docker-entrypoint.sh /docker-entrypoint.sh
 
-# Create non-root user for security
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+# Make entrypoint script executable and create non-root user
+RUN chmod +x /docker-entrypoint.sh \
+    && useradd -m -u 1000 appuser \
+    && chown -R appuser:appuser /app
+
 USER appuser
 
 # Expose port
 EXPOSE 8000
 
-# Use exec form for proper signal handling
-# This ensures graceful shutdown when Docker sends SIGTERM
-ENTRYPOINT ["python", "-m", "uvicorn"]
-CMD ["app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Use entrypoint script for graceful shutdown
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive=65"]
