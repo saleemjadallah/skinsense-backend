@@ -37,12 +37,17 @@ jobs:
         FIREBASE_SERVICE_ACCOUNT=${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         EOF
     
+    - name: Decode EC2 Key
+      run: |
+        echo "${{ secrets.EC2_KEY }}" | base64 -d > ec2_key.pem
+        chmod 600 ec2_key.pem
+    
     - name: Deploy to EC2 Server
       uses: appleboy/ssh-action@v1.0.3
       with:
         host: ${{ secrets.EC2_HOST }}
         username: ${{ secrets.EC2_USER }}
-        key: ${{ secrets.EC2_KEY }}
+        key_path: ec2_key.pem
         port: 22
         script_stop: true
         command_timeout: 20m
@@ -76,7 +81,7 @@ jobs:
       with:
         host: ${{ secrets.EC2_HOST }}
         username: ${{ secrets.EC2_USER }}
-        key: ${{ secrets.EC2_KEY }}
+        key_path: ec2_key.pem
         port: 22
         source: ".env"
         target: "/home/ubuntu/skinsense-backend/"
@@ -89,7 +94,7 @@ jobs:
       with:
         host: ${{ secrets.EC2_HOST }}
         username: ${{ secrets.EC2_USER }}
-        key: ${{ secrets.EC2_KEY }}
+        key_path: ec2_key.pem
         port: 22
         script: |
           # Wait a bit for services to start
@@ -103,9 +108,11 @@ jobs:
           echo "Container status:"
           docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | head -10
     
-    - name: Clean up local .env
+    - name: Clean up sensitive files
       if: always()
-      run: rm -f .env
+      run: |
+        rm -f .env
+        rm -f ec2_key.pem
     
     - name: Notify on Success
       if: success()

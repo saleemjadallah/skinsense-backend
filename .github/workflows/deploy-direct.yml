@@ -1,0 +1,125 @@
+name: Direct SSH Deployment
+
+on:
+  workflow_dispatch:  # Manual trigger only
+
+jobs:
+  deploy:
+    name: Deploy via Direct SSH
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Setup SSH and Deploy
+      env:
+        EC2_HOST: ${{ secrets.EC2_HOST }}
+        EC2_USER: ${{ secrets.EC2_USER }}
+        EC2_KEY: ${{ secrets.EC2_KEY }}
+      run: |
+        # Decode the base64-encoded private key
+        echo "Setting up SSH key..."
+        echo "$EC2_KEY" | base64 -d > ec2_key.pem
+        chmod 600 ec2_key.pem
+        
+        # Add host to known hosts to avoid prompt
+        mkdir -p ~/.ssh
+        ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts 2>/dev/null
+        
+        # Create deployment script
+        cat > deploy_remote.sh << 'DEPLOY_SCRIPT'
+        #!/bin/bash
+        set -e
+        
+        echo "🚀 Starting deployment on EC2..."
+        
+        # Find backend directory
+        if [ -d "/home/ubuntu/skinsense-backend" ]; then
+          cd /home/ubuntu/skinsense-backend
+        elif [ -d "$HOME/skinsense-backend" ]; then
+          cd $HOME/skinsense-backend
+        else
+          echo "Creating backend directory..."
+          cd $HOME
+          git clone https://github.com/saleemjadallah/skinsense-backend.git
+          cd skinsense-backend
+        fi
+        
+        echo "📥 Pulling latest code..."
+        git fetch origin main
+        git reset --hard origin/main
+        
+        # Check if .env exists
+        if [ ! -f .env ]; then
+          echo "⚠️ Warning: .env file not found"
+          echo "Creating template .env file..."
+          cat > .env.example << 'EOF'
+        # Add your environment variables here
+        MONGODB_URL=
+        SECRET_KEY=
+        ORBO_AI_API_KEY=
+        ORBO_CLIENT_ID=
+        OPENAI_API_KEY=
+        PERPLEXITY_API_KEY=
+        AWS_ACCESS_KEY_ID=
+        AWS_SECRET_ACCESS_KEY=
+        AWS_REGION=
+        S3_BUCKET_NAME=
+        CLOUDFRONT_DOMAIN=
+        ZEPTOMAIL_SEND_TOKEN=
+        FIREBASE_PROJECT_ID=
+        FIREBASE_SERVICE_ACCOUNT=
+        EOF
+          echo "Please copy .env.example to .env and add your credentials"
+        fi
+        
+        echo "🐳 Building and starting containers..."
+        
+        # Use appropriate docker-compose command
+        if command -v docker-compose &> /dev/null; then
+          COMPOSE_CMD="docker-compose"
+        else
+          COMPOSE_CMD="docker compose"
+        fi
+        
+        # Deploy based on available configurations
+        if [ -f deploy-zero-downtime.sh ]; then
+          echo "Using zero-downtime deployment..."
+          chmod +x deploy-zero-downtime.sh
+          ./deploy-zero-downtime.sh
+        elif [ -f docker-compose.blue-green.yml ]; then
+          echo "Using blue-green deployment..."
+          $COMPOSE_CMD -f docker-compose.blue-green.yml up -d --build
+        elif [ -f docker-compose.yml ]; then
+          echo "Using standard deployment..."
+          $COMPOSE_CMD up -d --build
+        else
+          echo "❌ No docker-compose file found!"
+          exit 1
+        fi
+        
+        # Wait and check
+        echo "⏳ Waiting for services..."
+        sleep 15
+        
+        echo "🔍 Checking health..."
+        curl -f http://localhost:8000/health || echo "Health check pending..."
+        
+        echo "📊 Container status:"
+        docker ps --format "table {{.Names}}\t{{.Status}}"
+        
+        echo "✅ Deployment complete!"
+        DEPLOY_SCRIPT
+        
+        # Copy and execute deployment script
+        echo "Copying deployment script to server..."
+        scp -i ec2_key.pem -o StrictHostKeyChecking=no deploy_remote.sh $EC2_USER@$EC2_HOST:~/deploy_remote.sh
+        
+        echo "Executing deployment..."
+        ssh -i ec2_key.pem -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST 'chmod +x ~/deploy_remote.sh && ~/deploy_remote.sh && rm ~/deploy_remote.sh'
+        
+        # Clean up
+        rm -f ec2_key.pem deploy_remote.sh
+        
+        echo "✨ Deployment finished!"
