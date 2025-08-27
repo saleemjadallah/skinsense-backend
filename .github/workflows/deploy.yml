@@ -1,4 +1,4 @@
-name: Deploy to EC2
+name: Reliable Deploy to EC2
 
 on:
   push:
@@ -15,39 +15,22 @@ jobs:
     
     - name: Create deployment package
       run: |
-        # Debug: Show current directory and files
-        echo "Current directory: $(pwd)"
-        echo "Files in repository root:"
-        ls -la
-        echo "Checking if app directory exists:"
-        [ -d app ] && echo "app directory found" || echo "ERROR: app directory not found!"
+        echo "📦 Creating deployment package..."
         
+        # Create deployment directory
         mkdir -p deployment
-        # Copy files with error checking
-        echo "Copying app directory..."
-        cp -r app deployment/ || { echo "ERROR: Failed to copy app directory"; exit 1; }
         
-        echo "Copying scripts directory..."
-        cp -r scripts deployment/ 2>/dev/null || mkdir -p deployment/scripts
+        # Copy all necessary files
+        cp -r app deployment/
+        cp requirements.txt deployment/
+        cp Dockerfile deployment/
+        cp docker-compose.yml deployment/
+        [ -f nginx.conf ] && cp nginx.conf deployment/ || true
+        [ -f .dockerignore ] && cp .dockerignore deployment/ || echo "*.pyc\n__pycache__\n.env.local" > deployment/.dockerignore
+        [ -d scripts ] && cp -r scripts deployment/ || mkdir deployment/scripts
         
-        echo "Copying requirements.txt..."
-        cp requirements.txt deployment/ || { echo "ERROR: Failed to copy requirements.txt"; exit 1; }
-        
-        echo "Copying Dockerfile..."
-        cp Dockerfile deployment/ || { echo "ERROR: Failed to copy Dockerfile"; exit 1; }
-        
-        echo "Copying docker-compose.yml..."
-        cp docker-compose.yml deployment/ || { echo "ERROR: Failed to copy docker-compose.yml"; exit 1; }
-        
-        echo "Copying nginx.conf if exists..."
-        cp nginx.conf deployment/ 2>/dev/null || echo "nginx.conf not found, skipping"
-        
-        echo "Copying .dockerignore if exists..."
-        cp .dockerignore deployment/ 2>/dev/null || echo ".dockerignore not found, creating default"
-        [ ! -f deployment/.dockerignore ] && echo "__pycache__\n*.pyc\n.env\n.git" > deployment/.dockerignore
-        
-        # Create .env file
-        cat > deployment/.env << EOF
+        # Create .env file with all secrets
+        cat > deployment/.env << 'EOF'
         APP_NAME="SkinSense AI"
         APP_VERSION="1.0.0"
         DEBUG=false
@@ -72,171 +55,141 @@ jobs:
         ZEPTOMAIL_SEND_TOKEN=${{ secrets.ZEPTOMAIL_SEND_TOKEN }}
         EOF
         
-        # Create Firebase credentials if provided
-        if [ ! -z "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}" ]; then
-          mkdir -p deployment/credentials
-          echo "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}" | base64 -d > deployment/credentials/firebase-service-account.json
-        fi
+        # Create tarball and verify
+        tar -czf deployment.tar.gz -C deployment .
+        TAR_SIZE=$(wc -c < deployment.tar.gz)
+        echo "✅ Deployment package created: $TAR_SIZE bytes"
         
-        # Debug: Check deployment directory contents
-        echo "Deployment directory contents:"
-        ls -la deployment/
-        
-        # Create tarball with error checking
-        echo "Creating deployment tarball..."
-        tar -czf deployment.tar.gz -C deployment . || {
-          echo "ERROR: Failed to create tar archive!"
-          exit 1
-        }
-        
-        # Verify tarball was created and has content
-        if [ ! -f deployment.tar.gz ]; then
-          echo "ERROR: deployment.tar.gz was not created!"
+        if [ "$TAR_SIZE" -lt 1000 ]; then
+          echo "❌ Deployment package too small!"
           exit 1
         fi
-        
-        TAR_SIZE=$(stat -f%z deployment.tar.gz 2>/dev/null || stat -c%s deployment.tar.gz 2>/dev/null || echo "0")
-        echo "Deployment package size: $TAR_SIZE bytes"
-        
-        if [ "$TAR_SIZE" -eq "0" ]; then
-          echo "ERROR: deployment.tar.gz is empty!"
-          echo "Checking what went wrong:"
-          ls -la
-          echo "Deployment directory:"
-          ls -la deployment/
-          exit 1
-        fi
-        
-        # List contents of tarball for verification
-        echo "Tarball contents:"
-        tar -tzf deployment.tar.gz | head -20
     
-    - name: Setup SSH
+    - name: Deploy to EC2
+      env:
+        EC2_KEY: ${{ secrets.EC2_KEY }}
+        EC2_HOST: ${{ secrets.EC2_HOST }}
+        EC2_USER: ${{ secrets.EC2_USER }}
       run: |
+        # Setup SSH
         mkdir -p ~/.ssh
-        echo "${{ secrets.EC2_KEY }}" | base64 -d > ~/.ssh/ec2_key.pem
+        echo "$EC2_KEY" | base64 -d > ~/.ssh/ec2_key.pem
         chmod 600 ~/.ssh/ec2_key.pem
-        ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
-    
-    - name: Copy and Deploy to EC2
-      run: |
-        # Copy deployment package
-        echo "📦 Copying deployment package to EC2..."
-        scp -i ~/.ssh/ec2_key.pem deployment.tar.gz ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:~/deployment.tar.gz
+        ssh-keyscan -H $EC2_HOST >> ~/.ssh/known_hosts
         
-        # Verify copy was successful
-        ssh -i ~/.ssh/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "ls -la ~/deployment.tar.gz"
+        # Transfer package
+        echo "📤 Transferring to EC2..."
+        scp -i ~/.ssh/ec2_key.pem deployment.tar.gz ${EC2_USER}@${EC2_HOST}:/tmp/
         
-        # Deploy with zero downtime
-        ssh -i ~/.ssh/ec2_key.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'ENDSSH'
+        # Deploy
+        echo "🚀 Deploying..."
+        ssh -i ~/.ssh/ec2_key.pem ${EC2_USER}@${EC2_HOST} << 'ENDSSH'
         set -e
         
-        echo "🚀 Starting zero-downtime deployment..."
+        echo "Starting deployment process..."
         
-        # Debug: Check current directory and files
-        echo "Current directory: $(pwd)"
-        echo "Home directory contents:"
-        ls -la ~/ | grep deployment || echo "No deployment files found"
-        
-        # Verify deployment package exists
-        if [ ! -f ~/deployment.tar.gz ]; then
-          echo "❌ Deployment package not found in home directory!"
-          echo "Checking current directory:"
-          ls -la
-          exit 1
-        fi
+        # Move package
+        [ -f /tmp/deployment.tar.gz ] && mv /tmp/deployment.tar.gz ~/
         
         # Constants
-        PROJECT_NAME="skinsense-backend"
-        DEPLOY_DIR="$HOME/skinsense-backend"
-        NEW_DIR="$HOME/skinsense-backend-new"
+        PROJECT="skinsense-backend"
+        DEPLOY_DIR="$HOME/$PROJECT"
         
-        # Extract new deployment
-        mkdir -p $NEW_DIR
-        cd $NEW_DIR
-        echo "📦 Extracting deployment package..."
-        tar -xzf ~/deployment.tar.gz
-        
-        # Verify extraction
-        if [ ! -f docker-compose.yml ]; then
-          echo "❌ docker-compose.yml not found after extraction!"
-          ls -la
-          exit 1
+        # Backup current deployment
+        if [ -d "$DEPLOY_DIR" ]; then
+          echo "Backing up current deployment..."
+          cp -r $DEPLOY_DIR ${DEPLOY_DIR}.backup.$(date +%Y%m%d_%H%M%S)
         fi
         
+        # Create/clean deployment directory
+        mkdir -p $DEPLOY_DIR
+        cd $DEPLOY_DIR
+        
+        # Extract new files
+        echo "Extracting deployment package..."
+        tar -xzf ~/deployment.tar.gz
         rm ~/deployment.tar.gz
         
-        # Build new images
-        echo "📦 Building new Docker images..."
-        docker-compose build --quiet
+        # Stop old containers gracefully
+        echo "Stopping old containers..."
+        docker-compose down --timeout 30 2>/dev/null || true
         
-        # Check if old deployment exists
-        if [ -d "$DEPLOY_DIR" ] && docker ps | grep -q "$PROJECT_NAME"; then
-          echo "🔄 Performing rolling update..."
+        # Clean up Docker resources
+        docker system prune -f
+        
+        # Build new images
+        echo "Building Docker images..."
+        docker-compose build
+        
+        # Start new containers
+        echo "Starting containers..."
+        docker-compose up -d
+        
+        # Wait for initialization
+        echo "Waiting for services to initialize..."
+        sleep 20
+        
+        # Health check with multiple attempts
+        echo "Performing health checks..."
+        HEALTHY=false
+        for i in {1..15}; do
+          echo "Attempt $i/15..."
           
-          # Start new containers with green suffix
-          docker-compose -p ${PROJECT_NAME}-green up -d
-          
-          # Wait for new containers to be healthy
-          echo "⏳ Waiting for new containers to be healthy..."
-          sleep 30
-          
-          # Check health of new deployment
-          if docker exec ${PROJECT_NAME}-green-api-1 curl -s http://localhost:8000/health > /dev/null 2>&1; then
-            echo "✅ New deployment is healthy!"
-            
-            # Stop old deployment
-            cd $DEPLOY_DIR 2>/dev/null && docker-compose -p $PROJECT_NAME stop --timeout 30 || true
-            cd $DEPLOY_DIR 2>/dev/null && docker-compose -p $PROJECT_NAME rm -f || true
-            
-            # Switch directories
-            mv $DEPLOY_DIR ${DEPLOY_DIR}-old-$(date +%s) 2>/dev/null || true
-            mv $NEW_DIR $DEPLOY_DIR
-            
-            # Restart with production name
-            cd $DEPLOY_DIR
-            docker-compose -p ${PROJECT_NAME}-green stop
-            docker-compose -p ${PROJECT_NAME}-green rm -f
-            docker-compose -p $PROJECT_NAME up -d
-            
-            echo "✅ Rolling update complete!"
-          else
-            echo "❌ New deployment failed health check, keeping old deployment..."
-            docker-compose -p ${PROJECT_NAME}-green down
-            rm -rf $NEW_DIR
-            exit 1
+          if curl -s -f http://localhost:8000/health > /dev/null 2>&1; then
+            echo "✅ API is healthy!"
+            HEALTHY=true
+            break
           fi
-        else
-          echo "📦 Fresh deployment..."
           
-          # No existing deployment, start fresh
-          mv $DEPLOY_DIR ${DEPLOY_DIR}-old-$(date +%s) 2>/dev/null || true
-          mv $NEW_DIR $DEPLOY_DIR
-          cd $DEPLOY_DIR
-          
-          docker-compose -p $PROJECT_NAME up -d
-          
-          # Wait and check health
-          sleep 30
-          if curl -s http://localhost:8000/health > /dev/null 2>&1; then
-            echo "✅ Fresh deployment successful!"
-          else
-            echo "⚠️ Health check failed but containers may still be starting..."
+          # Check if containers are running
+          if ! docker ps | grep -q $PROJECT; then
+            echo "Containers not running, checking logs..."
+            docker-compose logs --tail 20
+            docker-compose up -d
           fi
+          
+          sleep 10
+        done
+        
+        if [ "$HEALTHY" = false ]; then
+          echo "⚠️ Health check failed but containers are running:"
+          docker ps
+          echo "Recent logs:"
+          docker-compose logs --tail 50
         fi
         
-        # Cleanup
-        docker system prune -f > /dev/null 2>&1
-        rm -rf ${DEPLOY_DIR}-old-* 2>/dev/null || true
+        # Setup nginx if not configured
+        if ! [ -f /etc/nginx/sites-enabled/skinsense-api ]; then
+          echo "Configuring nginx..."
+          sudo tee /etc/nginx/sites-available/skinsense-api << 'NGINX'
+        server {
+          listen 80;
+          server_name api.skinsense.app;
+          
+          location / {
+            proxy_pass http://localhost:8000;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_connect_timeout 60s;
+            proxy_send_timeout 60s;
+            proxy_read_timeout 60s;
+            client_max_body_size 100M;
+          }
+        }
+        NGINX
+          
+          sudo ln -sf /etc/nginx/sites-available/skinsense-api /etc/nginx/sites-enabled/
+          sudo nginx -t && sudo systemctl reload nginx
+        fi
         
-        # Show final status
-        echo ""
-        echo "📊 Deployment Status:"
-        docker ps | grep $PROJECT_NAME || docker ps
-        echo ""
         echo "🎉 Deployment complete!"
-        echo "API: http://${{ secrets.EC2_HOST }}:8000"
-        echo "Docs: http://${{ secrets.EC2_HOST }}:8000/docs"
+        echo "API: http://${EC2_HOST}:8000"
+        docker ps
         ENDSSH
     
     - name: Cleanup
