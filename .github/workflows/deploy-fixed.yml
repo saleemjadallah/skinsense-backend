@@ -56,11 +56,45 @@ jobs:
           echo "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}" | base64 -d > deployment/credentials/firebase-service-account.json
         fi
         
-        # Create tarball
-        tar -czf deployment.tar.gz -C deployment .
+        # Debug deployment directory
+        echo "Checking deployment directory:"
+        ls -la deployment/
+        echo "App directory:"
+        ls -la deployment/app/ | head -10 || echo "No app directory"
         
-        # Verify tarball was created
-        ls -la deployment.tar.gz
+        # Create tarball with proper error handling
+        echo "Creating tarball..."
+        tar -czf deployment.tar.gz -C deployment . || {
+          echo "ERROR: tar command failed!"
+          echo "Current directory: $(pwd)"
+          echo "Files in current directory:"
+          ls -la
+          exit 1
+        }
+        
+        # Verify tarball was created and has content
+        if [ ! -f deployment.tar.gz ]; then
+          echo "ERROR: deployment.tar.gz file not found!"
+          exit 1
+        fi
+        
+        # Check file size (portable way)
+        TAR_SIZE=$(wc -c < deployment.tar.gz)
+        echo "Deployment package created: $TAR_SIZE bytes"
+        
+        if [ "$TAR_SIZE" -eq "0" ]; then
+          echo "ERROR: Tarball is empty!"
+          echo "Debug info:"
+          echo "Working directory: $(pwd)"
+          echo "Deployment directory exists: $([ -d deployment ] && echo 'yes' || echo 'no')"
+          echo "Deployment directory contents:"
+          find deployment -type f | head -20
+          exit 1
+        fi
+        
+        # Show tarball contents for verification
+        echo "Tarball contents (first 10 files):"
+        tar -tzf deployment.tar.gz | head -10
     
     - name: Setup SSH
       run: |

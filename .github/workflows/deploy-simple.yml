@@ -15,14 +15,36 @@ jobs:
     
     - name: Create deployment package
       run: |
+        # Debug: Show current directory and files
+        echo "Current directory: $(pwd)"
+        echo "Files in repository root:"
+        ls -la
+        echo "Checking if app directory exists:"
+        [ -d app ] && echo "app directory found" || echo "ERROR: app directory not found!"
+        
         mkdir -p deployment
-        cp -r app deployment/
+        # Copy files with error checking
+        echo "Copying app directory..."
+        cp -r app deployment/ || { echo "ERROR: Failed to copy app directory"; exit 1; }
+        
+        echo "Copying scripts directory..."
         cp -r scripts deployment/ 2>/dev/null || mkdir -p deployment/scripts
-        cp requirements.txt deployment/
-        cp Dockerfile deployment/
-        cp docker-compose.yml deployment/
-        cp nginx.conf deployment/ 2>/dev/null || true
-        cp .dockerignore deployment/
+        
+        echo "Copying requirements.txt..."
+        cp requirements.txt deployment/ || { echo "ERROR: Failed to copy requirements.txt"; exit 1; }
+        
+        echo "Copying Dockerfile..."
+        cp Dockerfile deployment/ || { echo "ERROR: Failed to copy Dockerfile"; exit 1; }
+        
+        echo "Copying docker-compose.yml..."
+        cp docker-compose.yml deployment/ || { echo "ERROR: Failed to copy docker-compose.yml"; exit 1; }
+        
+        echo "Copying nginx.conf if exists..."
+        cp nginx.conf deployment/ 2>/dev/null || echo "nginx.conf not found, skipping"
+        
+        echo "Copying .dockerignore if exists..."
+        cp .dockerignore deployment/ 2>/dev/null || echo ".dockerignore not found, creating default"
+        [ ! -f deployment/.dockerignore ] && echo "__pycache__\n*.pyc\n.env\n.git" > deployment/.dockerignore
         
         # Create .env file
         cat > deployment/.env << EOF
@@ -56,7 +78,38 @@ jobs:
           echo "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}" | base64 -d > deployment/credentials/firebase-service-account.json
         fi
         
-        tar -czf deployment.tar.gz -C deployment .
+        # Debug: Check deployment directory contents
+        echo "Deployment directory contents:"
+        ls -la deployment/
+        
+        # Create tarball with error checking
+        echo "Creating deployment tarball..."
+        tar -czf deployment.tar.gz -C deployment . || {
+          echo "ERROR: Failed to create tar archive!"
+          exit 1
+        }
+        
+        # Verify tarball was created and has content
+        if [ ! -f deployment.tar.gz ]; then
+          echo "ERROR: deployment.tar.gz was not created!"
+          exit 1
+        fi
+        
+        TAR_SIZE=$(stat -f%z deployment.tar.gz 2>/dev/null || stat -c%s deployment.tar.gz 2>/dev/null || echo "0")
+        echo "Deployment package size: $TAR_SIZE bytes"
+        
+        if [ "$TAR_SIZE" -eq "0" ]; then
+          echo "ERROR: deployment.tar.gz is empty!"
+          echo "Checking what went wrong:"
+          ls -la
+          echo "Deployment directory:"
+          ls -la deployment/
+          exit 1
+        fi
+        
+        # List contents of tarball for verification
+        echo "Tarball contents:"
+        tar -tzf deployment.tar.gz | head -20
     
     - name: Setup SSH
       run: |
