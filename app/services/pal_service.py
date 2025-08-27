@@ -157,36 +157,29 @@ class PalService:
                 session_id = str(ObjectId())
                 self._create_session(user_id, session_id)
             
-            # Build messages for GPT-5
-            messages = self._build_messages(
-                message, 
-                user_context, 
-                conversation_history
+            # Build input for Responses API
+            # Combine system prompt and conversation into a single input
+            input_text = f"{PAL_SYSTEM_PROMPT}\n\n"
+            if user_context:
+                input_text += f"User Context:\n{self._format_user_context(user_context)}\n\n"
+            
+            # Add conversation history
+            for chat in conversation_history[-5:]:  # Last 5 messages for context
+                input_text += f"User: {chat.get('user_message', '')}\n"
+                input_text += f"Pal: {chat.get('pal_response', '')}\n\n"
+            
+            input_text += f"User: {message}\n"
+            
+            # Call GPT-5-mini using new Responses API
+            response = self.client.responses.create(
+                model="gpt-5-mini",  # Fast, cost-efficient model
+                input=input_text,
+                reasoning={"effort": "minimal"},  # Minimal reasoning for speed
+                text={"verbosity": "low"}  # Low verbosity for concise responses
             )
             
-            # Track prompt tokens
-            prompt_text = json.dumps(messages)
-            prompt_tokens = len(prompt_text.split()) * 1.3
-            ai_service_tokens.labels(service="openai", type="prompt").inc(int(prompt_tokens))
-            
-            # Call GPT-5-mini for faster, cost-efficient responses
-            response = self.client.chat.completions.create(
-                model="gpt-5-mini",  # Fast, cost-efficient model for well-defined tasks
-                messages=messages,
-                temperature=0.7,  # Slightly lower for more consistent responses
-                max_tokens=400,   # Reduced for faster responses
-                presence_penalty=0.1,
-                frequency_penalty=0.1,
-                timeout=10.0  # 10 second timeout to prevent hanging
-            )
-            
-            # Track completion tokens
-            if hasattr(response, 'usage'):
-                ai_service_tokens.labels(service="openai", type="completion").inc(
-                    response.usage.completion_tokens
-                )
-            
-            pal_response = response.choices[0].message.content
+            # Extract response from new Responses API format
+            pal_response = response.output_text
             
             # Save chat to history
             self._save_chat_message(
@@ -207,37 +200,6 @@ class PalService:
         except Exception as e:
             logger.error(f"Pal chat error: {e}")
             return self._get_fallback_response(message)
-    
-    def _build_messages(
-        self,
-        message: str,
-        user_context: Dict[str, Any],
-        conversation_history: List[Dict[str, Any]]
-    ) -> List[Dict[str, str]]:
-        """
-        Build messages array for GPT with context
-        """
-        messages = [
-            {"role": "system", "content": PAL_SYSTEM_PROMPT}
-        ]
-        
-        # Add user context as system message
-        if user_context:
-            context_message = self._format_user_context(user_context)
-            messages.append({
-                "role": "system", 
-                "content": f"User Context:\n{context_message}"
-            })
-        
-        # Add conversation history (last 10 messages)
-        for chat in conversation_history[-10:]:
-            messages.append({"role": "user", "content": chat.get("user_message", "")})
-            messages.append({"role": "assistant", "content": chat.get("pal_response", "")})
-        
-        # Add current message
-        messages.append({"role": "user", "content": message})
-        
-        return messages
     
     def _format_user_context(self, context: Dict[str, Any]) -> str:
         """
