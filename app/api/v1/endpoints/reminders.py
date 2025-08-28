@@ -8,6 +8,11 @@ from bson import ObjectId
 
 from app.api.deps import get_current_user
 from app.services.smart_reminder_service import SmartReminderService
+# from app.utils.datetime_helpers import get_utc_now
+
+# Simple helper function to get current UTC time
+def get_utc_now():
+    return datetime.utcnow()
 from app.schemas.reminder import (
     CreateReminderRequest,
     ReminderResponse,
@@ -160,18 +165,31 @@ async def get_smart_reminders(
         for i, reminder in enumerate(reminders[:limit]):
             try:
                 logger.debug(f"[REMINDERS API] Formatting reminder {i+1}: {reminder}")
+                # Convert priority to int if it's a string
+                priority = reminder.get("priority", 5)
+                if isinstance(priority, str):
+                    priority_map = {"low": 3, "medium": 5, "high": 7, "urgent": 9}
+                    priority = priority_map.get(priority.lower(), 5)
+                
                 formatted_reminder = ReminderResponse(
                     id=str(reminder.get("_id", reminder.get("id", ""))),
                     user_id=str(reminder.get("user_id", user_id)),
-                    reminder_type=reminder["reminder_type"],
-                    category=reminder["category"],
-                    priority=reminder["priority"],
-                    content=reminder["content"],
-                    scheduled_for=reminder["scheduled_for"],
-                    status=reminder["status"],
+                    reminder_type=reminder.get("reminder_type", "action"),
+                    category=reminder.get("category", "general"),
+                    priority=priority,
+                    content=reminder.get("content", {
+                        "title": "Reminder",
+                        "message": "You have a reminder",
+                        "action_text": "View",
+                        "action_route": "/home",
+                        "icon": "star",
+                        "color": "gradient_blue"
+                    }),
+                    scheduled_for=reminder.get("scheduled_for", get_utc_now()),
+                    status=reminder.get("status", "pending"),
                     calendar_synced=reminder.get("calendar_synced", False),
                     calendar_event_id=reminder.get("calendar_event_id"),
-                    created_at=reminder["created_at"]
+                    created_at=reminder.get("created_at", get_utc_now())
                 )
                 formatted_reminders.append(formatted_reminder)
                 logger.debug(f"[REMINDERS API] Successfully formatted reminder {i+1}")

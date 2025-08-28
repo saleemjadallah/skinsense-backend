@@ -212,7 +212,7 @@ class EmailService:
         otp = self.generate_otp()
         self.store_otp(to_email, otp, "verification")
         
-        subject = f"{settings.app_name} - Verify Your Email"
+        subject = f"{settings.APP_NAME} - Verify Your Email"
         
         html_content = f"""
         <!DOCTYPE html>
@@ -262,23 +262,23 @@ class EmailService:
         </head>
         <body>
             <div class="header">
-                <h1>{settings.app_name}</h1>
+                <h1>{settings.APP_NAME}</h1>
                 <p>Your Personalized Skincare Journey Starts Here</p>
             </div>
             <div class="content">
                 <h2>Hi {username},</h2>
-                <p>Welcome to {settings.app_name}! To complete your registration, please verify your email address using the code below:</p>
+                <p>Welcome to {settings.APP_NAME}! To complete your registration, please verify your email address using the code below:</p>
                 
                 <div class="otp-code">{otp}</div>
                 
                 <p>This code will expire in 15 minutes for security reasons.</p>
                 
-                <p>If you didn't create an account with {settings.app_name}, please ignore this email.</p>
+                <p>If you didn't create an account with {settings.APP_NAME}, please ignore this email.</p>
                 
-                <p>Need help? Contact our support team at support@{settings.zeptomail_domain}</p>
+                <p>Need help? Contact our support team at support@{settings.ZEPTOMAIL_DOMAIN}</p>
             </div>
             <div class="footer">
-                <p>&copy; 2024 {settings.app_name}. All rights reserved.</p>
+                <p>&copy; 2024 {settings.APP_NAME}. All rights reserved.</p>
             </div>
         </body>
         </html>
@@ -287,14 +287,14 @@ class EmailService:
         text_content = f"""
         Hi {username},
         
-        Welcome to {settings.app_name}! Your verification code is: {otp}
+        Welcome to {settings.APP_NAME}! Your verification code is: {otp}
         
         This code will expire in 15 minutes.
         
         If you didn't create an account, please ignore this email.
         
         Best regards,
-        The {settings.app_name} Team
+        The {settings.APP_NAME} Team
         """
         
         # Log OTP for testing when email fails
@@ -311,7 +311,7 @@ class EmailService:
         otp = self.generate_otp()
         self.store_otp(to_email, otp, "reset")
         
-        subject = f"{settings.app_name} - Reset Your Password"
+        subject = f"{settings.APP_NAME} - Reset Your Password"
         
         html_content = f"""
         <!DOCTYPE html>
@@ -361,7 +361,7 @@ class EmailService:
         </head>
         <body>
             <div class="header">
-                <h1>{settings.app_name}</h1>
+                <h1>{settings.APP_NAME}</h1>
                 <p>Password Reset Request</p>
             </div>
             <div class="content">
@@ -382,7 +382,7 @@ class EmailService:
                 </ul>
             </div>
             <div class="footer">
-                <p>&copy; 2024 {settings.app_name}. All rights reserved.</p>
+                <p>&copy; 2024 {settings.APP_NAME}. All rights reserved.</p>
             </div>
         </body>
         </html>
@@ -398,7 +398,7 @@ class EmailService:
         If you didn't request this, please ignore this email.
         
         Best regards,
-        The {settings.app_name} Team
+        The {settings.APP_NAME} Team
         """
         
         # Log OTP for testing when email fails
@@ -423,7 +423,7 @@ class EmailService:
     
     async def send_welcome_email(self, to_email: str, username: str) -> bool:
         """Send welcome email after successful registration"""
-        subject = f"Welcome to {settings.app_name} - Your Skincare Journey Begins!"
+        subject = f"Welcome to {settings.APP_NAME} - Your Skincare Journey Begins!"
         
         html_content = f"""
         <!DOCTYPE html>
@@ -485,14 +485,14 @@ class EmailService:
         </head>
         <body>
             <div class="header">
-                <h1>Welcome to {settings.app_name}!</h1>
+                <h1>Welcome to {settings.APP_NAME}!</h1>
                 <p>Your Personalized Skincare Journey Starts Now</p>
             </div>
             <div class="content">
                 <h2>Hi {username},</h2>
-                <p>We're thrilled to have you join the {settings.app_name} community! You've taken the first step towards achieving your best skin ever.</p>
+                <p>We're thrilled to have you join the {settings.APP_NAME} community! You've taken the first step towards achieving your best skin ever.</p>
                 
-                <h3>Here's what you can do with {settings.app_name}:</h3>
+                <h3>Here's what you can do with {settings.APP_NAME}:</h3>
                 
                 <div class="feature">
                     <span class="feature-icon">📸</span>
@@ -538,11 +538,11 @@ class EmailService:
                     <li>Track your progress weekly for best results</li>
                 </ol>
                 
-                <p>If you have any questions, our support team is here to help at support@{settings.zeptomail_domain}</p>
+                <p>If you have any questions, our support team is here to help at support@{settings.ZEPTOMAIL_DOMAIN}</p>
             </div>
             <div class="footer">
                 <p>Follow us on social media for skincare tips and updates!</p>
-                <p>&copy; 2024 {settings.app_name}. All rights reserved.</p>
+                <p>&copy; 2024 {settings.APP_NAME}. All rights reserved.</p>
             </div>
         </body>
         </html>
@@ -551,11 +551,11 @@ class EmailService:
         text_content = f"""
         Hi {username},
         
-        Welcome to {settings.app_name}!
+        Welcome to {settings.APP_NAME}!
         
         We're thrilled to have you join our community. You've taken the first step towards achieving your best skin ever.
         
-        What you can do with {settings.app_name}:
+        What you can do with {settings.APP_NAME}:
         - AI Skin Analysis for detailed insights
         - Personalized product recommendations
         - Custom skincare routines
@@ -564,7 +564,7 @@ class EmailService:
         Get started by taking your first skin analysis photo!
         
         Best regards,
-        The {settings.app_name} Team
+        The {settings.APP_NAME} Team
         """
         
         return await self.send_email(to_email, subject, html_content, text_content)
