@@ -94,6 +94,12 @@ check_health() {
 main() {
     log "Starting zero-downtime deployment..."
     
+    # Check if system restart is required
+    if [ -f /var/run/reboot-required ]; then
+        warning "System restart is required after package updates"
+        warning "Consider scheduling a maintenance window to restart the server"
+    fi
+    
     # Set up network with better error handling
     log "Setting up network..."
     
@@ -152,40 +158,85 @@ main() {
     if ! docker ps | grep -q $NGINX_CONTAINER; then
         log "Starting nginx..."
         docker-compose -f $COMPOSE_FILE up -d nginx
-        sleep 3
+        sleep 5
+        
+        # Wait for nginx to be fully ready
+        for i in {1..10}; do
+            if docker exec $NGINX_CONTAINER nginx -t >/dev/null 2>&1; then
+                break
+            fi
+            log "Waiting for nginx to be ready... ($i/10)"
+            sleep 2
+        done
+    fi
+    
+    # Verify new backend is reachable from nginx container
+    log "Verifying backend connectivity..."
+    if ! docker exec $NGINX_CONTAINER curl -sf http://backend-${NEW_COLOR}:8000/health >/dev/null 2>&1; then
+        error "Cannot reach backend-${NEW_COLOR} from nginx container"
     fi
     
     # Switch traffic to new container
     log "Switching traffic to $NEW_COLOR..."
     
-    # Update nginx config directly
-    docker exec $NGINX_CONTAINER sh -c "cat > /etc/nginx/conf.d/default.conf << 'EOF'
+    # Create temporary nginx config file
+    cat > /tmp/nginx-config.conf << EOF
 server {
     listen 80 default_server;
     server_name _;
     
+    # Add timeout settings for better reliability
+    proxy_connect_timeout 10s;
+    proxy_send_timeout 30s;
+    proxy_read_timeout 30s;
+    
     location / {
         proxy_pass http://backend-${NEW_COLOR}:8000;
         proxy_http_version 1.1;
-        proxy_set_header Host \\\$host;
-        proxy_set_header X-Real-IP \\\$remote_addr;
-        proxy_set_header X-Forwarded-For \\\$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \\\$scheme;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        
+        # Add upstream health check
+        proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
+        proxy_next_upstream_tries 3;
     }
     
     location /health {
         access_log off;
         proxy_pass http://backend-${NEW_COLOR}:8000/health;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 5s;
     }
 }
-EOF"
+EOF
     
-    # Reload nginx
-    if docker exec $NGINX_CONTAINER nginx -t 2>/dev/null; then
-        docker exec $NGINX_CONTAINER nginx -s reload
-        success "Traffic switched to $NEW_COLOR"
+    # Config created, ready to copy to container
+    
+    # Copy config to nginx container
+    if docker cp /tmp/nginx-config.conf $NGINX_CONTAINER:/etc/nginx/conf.d/default.conf; then
+        success "Nginx configuration updated"
+    else
+        error "Failed to copy nginx configuration"
+    fi
+    rm -f /tmp/nginx-config.conf
+    
+    # Test and reload nginx
+    log "Testing nginx configuration..."
+    if docker exec $NGINX_CONTAINER nginx -t; then
+        log "Nginx config test passed, reloading..."
+        if docker exec $NGINX_CONTAINER nginx -s reload; then
+            success "Traffic switched to $NEW_COLOR"
+        else
+            error "Nginx reload failed"
+        fi
     else
         error "Nginx configuration test failed"
+        log "Debugging nginx configuration..."
+        docker exec $NGINX_CONTAINER cat /etc/nginx/conf.d/default.conf || true
+        docker exec $NGINX_CONTAINER nginx -T || true
+        exit 1
     fi
     
     # Wait for connections to drain
