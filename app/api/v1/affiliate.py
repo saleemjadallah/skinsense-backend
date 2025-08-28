@@ -7,6 +7,7 @@ from pymongo.database import Database
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 from bson import ObjectId
+import logging
 
 from app.database import get_database
 from app.api.deps import get_current_active_user
@@ -17,8 +18,10 @@ from app.schemas.affiliate import (
     ConversionWebhook,
     AffiliateAnalyticsResponse
 )
+from app.core.config import settings
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/track/product/{tracking_id}")
