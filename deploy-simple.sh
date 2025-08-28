@@ -19,7 +19,12 @@ log "Starting simple deployment..."
 
 # Stop all containers (allows for quick updates)
 log "Stopping existing containers..."
-docker-compose -f docker-compose.production.yml down || true
+docker-compose -f docker-compose.yml down || true
+
+# Force remove any conflicting containers
+log "Cleaning up any conflicting containers..."
+docker stop skinsense_nginx skinsense_backend skinsense_redis 2>/dev/null || true
+docker rm skinsense_nginx skinsense_backend skinsense_redis 2>/dev/null || true
 
 # Clean up resources
 log "Cleaning up Docker resources..."
@@ -28,7 +33,7 @@ docker image prune -f >/dev/null 2>&1 || true
 
 # Build and start fresh
 log "Building and starting containers..."
-docker-compose -f docker-compose.production.yml up --build -d
+docker-compose -f docker-compose.yml up --build -d
 
 # Wait for containers to be ready
 log "Waiting for services to start..."
