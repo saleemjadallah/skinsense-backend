@@ -103,7 +103,13 @@ jobs:
         
         # Execute deployment script
         echo "🔄 Running blue-green deployment..."
-        ./deploy.sh
+        # Ensure the script runs on the server, not locally
+        if [ -f deploy.sh ]; then
+          ./deploy.sh
+        else
+          echo "Deploy script not found in extracted package"
+          exit 1
+        fi
         
         # Verify deployment
         echo "✅ Deployment completed at $(date)"
