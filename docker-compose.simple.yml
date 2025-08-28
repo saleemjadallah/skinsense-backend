@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  backend:
+    build: .
+    container_name: skinsense_backend
+    environment:
+      - MONGODB_URL=${MONGODB_URL}
+      - DATABASE_NAME=skinpal
+      - SECRET_KEY=${SECRET_KEY}
+      - ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=60
+      - REFRESH_TOKEN_EXPIRE_DAYS=30
+      - ORBO_AI_API_KEY=${ORBO_AI_API_KEY}
+      - ORBO_CLIENT_ID=${ORBO_CLIENT_ID}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PERPLEXITY_API_KEY=${PERPLEXITY_API_KEY}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+      - CLOUDFRONT_DOMAIN=${CLOUDFRONT_DOMAIN}
+      - ZEPTOMAIL_SEND_TOKEN=${ZEPTOMAIL_SEND_TOKEN}
+      - REDIS_URL=redis://redis:6379
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS}
+    depends_on:
+      - redis
+    networks:
+      - skinsense_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  redis:
+    image: redis:7-alpine
+    container_name: skinsense_redis
+    networks:
+      - skinsense_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  nginx:
+    image: nginx:alpine
+    container_name: skinsense_nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/mime.types:/etc/nginx/mime.types:ro
+      - ./nginx/conf.d/simple.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+    networks:
+      - skinsense_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/nginx-status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  skinsense_network:
+    driver: bridge
