@@ -46,6 +46,8 @@ jobs:
         REDIS_URL=redis://redis:6379
         ENVIRONMENT=production
         DEBUG=false
+        BACKEND_CORS_ORIGINS=${{ secrets.BACKEND_CORS_ORIGINS }}
+        ALLOWED_HOSTS=${{ secrets.ALLOWED_HOSTS }}
         EOF
         
         # Copy deployment configurations
