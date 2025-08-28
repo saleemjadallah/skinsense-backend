@@ -94,14 +94,28 @@ check_health() {
 main() {
     log "Starting zero-downtime deployment..."
     
-    # Always recreate network to avoid label issues
+    # Set up network with better error handling
     log "Setting up network..."
-    docker network rm $NETWORK_NAME 2>/dev/null || true
-    docker network create --driver bridge --subnet 172.20.0.0/16 $NETWORK_NAME 2>/dev/null || true
     
-    # Verify network exists
+    # Check if network already exists
+    if docker network inspect $NETWORK_NAME >/dev/null 2>&1; then
+        log "Network $NETWORK_NAME already exists, checking if it's healthy..."
+        # Test network connectivity
+        if docker run --rm --network $NETWORK_NAME alpine:latest ping -c 1 8.8.8.8 >/dev/null 2>&1; then
+            log "Network is healthy, reusing existing network"
+        else
+            warning "Network exists but seems unhealthy, recreating..."
+            docker network rm $NETWORK_NAME 2>/dev/null || true
+            docker network create --driver bridge --subnet 172.20.0.0/16 $NETWORK_NAME
+        fi
+    else
+        log "Creating new network..."
+        docker network create --driver bridge --subnet 172.20.0.0/16 $NETWORK_NAME
+    fi
+    
+    # Verify network exists and is working
     if ! docker network inspect $NETWORK_NAME >/dev/null 2>&1; then
-        error "Failed to create network $NETWORK_NAME"
+        error "Failed to create or verify network $NETWORK_NAME"
     fi
     
     # Get current active backend
