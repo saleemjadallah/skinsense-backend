@@ -2,7 +2,7 @@ name: Deploy to Production
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]  # Support both main and master
   workflow_dispatch:
 
 jobs:
@@ -24,6 +24,26 @@ jobs:
         cp requirements.txt deployment/
         cp Dockerfile deployment/
         cp .dockerignore deployment/ 2>/dev/null || echo -e "*.pyc\n__pycache__\n.env\n.env.*\n*.log" > deployment/.dockerignore
+        
+        # Verify required secrets are set
+        echo "🔐 Verifying required secrets..."
+        MISSING_SECRETS=""
+        
+        [ -z "${{ secrets.MONGODB_URL }}" ] && MISSING_SECRETS="$MISSING_SECRETS MONGODB_URL"
+        [ -z "${{ secrets.SECRET_KEY }}" ] && MISSING_SECRETS="$MISSING_SECRETS SECRET_KEY"
+        [ -z "${{ secrets.ORBO_AI_API_KEY }}" ] && MISSING_SECRETS="$MISSING_SECRETS ORBO_AI_API_KEY"
+        [ -z "${{ secrets.ORBO_CLIENT_ID }}" ] && MISSING_SECRETS="$MISSING_SECRETS ORBO_CLIENT_ID"
+        [ -z "${{ secrets.OPENAI_API_KEY }}" ] && MISSING_SECRETS="$MISSING_SECRETS OPENAI_API_KEY"
+        [ -z "${{ secrets.EC2_HOST }}" ] && MISSING_SECRETS="$MISSING_SECRETS EC2_HOST"
+        [ -z "${{ secrets.EC2_USER }}" ] && MISSING_SECRETS="$MISSING_SECRETS EC2_USER"
+        [ -z "${{ secrets.EC2_KEY }}" ] && MISSING_SECRETS="$MISSING_SECRETS EC2_KEY"
+        
+        if [ -n "$MISSING_SECRETS" ]; then
+          echo "❌ Missing required secrets:$MISSING_SECRETS"
+          echo "Please add these secrets to your GitHub repository settings."
+          exit 1
+        fi
+        echo "✅ All required secrets are configured"
         
         # Create production .env file
         cat > deployment/.env << 'EOF'
@@ -62,10 +82,38 @@ jobs:
     
     - name: Setup SSH connection
       run: |
+        echo "🔐 Setting up SSH connection..."
         mkdir -p ~/.ssh
+        
+        # Decode and save EC2 key
         echo "${{ secrets.EC2_KEY }}" | base64 -d > ~/.ssh/deploy.pem
         chmod 600 ~/.ssh/deploy.pem
-        ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+        
+        # Verify key format
+        if ! ssh-keygen -l -f ~/.ssh/deploy.pem > /dev/null 2>&1; then
+          echo "❌ Invalid EC2 private key format!"
+          exit 1
+        fi
+        
+        # Add host to known_hosts with retry
+        for i in {1..3}; do
+          if ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null; then
+            echo "✅ Host key added to known_hosts"
+            break
+          else
+            echo "⚠️ Failed to scan host key, attempt $i/3"
+            sleep 2
+          fi
+        done
+        
+        # Test SSH connection
+        echo "🧪 Testing SSH connection..."
+        if ssh -i ~/.ssh/deploy.pem -o ConnectTimeout=10 -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "echo 'SSH connection successful'"; then
+          echo "✅ SSH connection verified"
+        else
+          echo "❌ SSH connection failed!"
+          exit 1
+        fi
     
     - name: Transfer deployment package
       run: |
@@ -101,9 +149,19 @@ jobs:
         tar -xzf /tmp/deployment.tar.gz
         rm -f /tmp/deployment.tar.gz
         
-        # Execute deployment script
+        # Execute deployment script with better error handling
         echo "🔄 Running blue-green deployment..."
-        ./deploy.sh
+        if ./deploy.sh; then
+          echo "✅ Deployment script completed successfully"
+        else
+          echo "❌ Deployment script failed!"
+          echo "🔍 Getting container status for debugging..."
+          docker ps -a || true
+          docker logs skinsense_nginx --tail 20 || true
+          docker logs skinsense_backend_blue --tail 20 || true
+          docker logs skinsense_backend_green --tail 20 || true
+          exit 1
+        fi
         
         # Verify deployment
         echo "✅ Deployment completed at $(date)"
@@ -112,22 +170,43 @@ jobs:
     - name: Health check
       run: |
         echo "🏥 Performing health check..."
-        sleep 15
+        sleep 30  # Give more time for containers to fully start
         
-        # Check API health using the actual domain
-        for i in {1..30}; do
-          if curl -sf "http://api.skinsense.app/health" > /dev/null || curl -sf "http://56.228.12.81/health" > /dev/null; then
-            echo "✅ API is healthy!"
-            exit 0
+        # Check API health with better error handling
+        HEALTH_CHECK_PASSED=false
+        
+        for i in {1..40}; do  # Increased attempts
+          echo "⏳ Health check attempt $i/40..."
+          
+          # Try multiple endpoints
+          if curl -sf --connect-timeout 10 --max-time 30 "http://api.skinsense.app/health" > /dev/null; then
+            echo "✅ API is healthy via domain!"
+            HEALTH_CHECK_PASSED=true
+            break
+          elif curl -sf --connect-timeout 10 --max-time 30 "http://56.228.12.81/health" > /dev/null; then
+            echo "✅ API is healthy via IP!"
+            HEALTH_CHECK_PASSED=true
+            break
+          elif curl -sf --connect-timeout 10 --max-time 30 "http://56.228.12.81:80/health" > /dev/null; then
+            echo "✅ API is healthy via IP:80!"
+            HEALTH_CHECK_PASSED=true
+            break
           fi
-          echo "⏳ Waiting for API... ($i/30)"
-          sleep 3
+          
+          sleep 5  # Increased sleep time
         done
         
-        echo "❌ Health check failed!"
-        echo "Debugging: Testing direct connection..."
-        curl -I "http://56.228.12.81/health" || true
-        exit 1
+        if [ "$HEALTH_CHECK_PASSED" = true ]; then
+          echo "✅ Health check successful!"
+          exit 0
+        else
+          echo "❌ Health check failed after all attempts!"
+          echo "🔍 Debugging information:"
+          curl -v --connect-timeout 10 "http://56.228.12.81/health" || true
+          echo "Trying to get container status via SSH..."
+          ssh -i ~/.ssh/deploy.pem ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} "docker ps && docker logs skinsense_nginx --tail 20" || true
+          exit 1
+        fi
     
     - name: Cleanup
       if: always()
