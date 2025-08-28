@@ -37,33 +37,19 @@ cleanup_resources() {
     success "Cleanup complete"
 }
 
-# Get current active backend
+# Get current active backend from nginx config
 get_active_backend() {
-    if [ -f "nginx/conf.d/.active" ]; then
-        cat nginx/conf.d/.active
-    elif docker exec $NGINX_CONTAINER test -f /etc/nginx/conf.d/.active 2>/dev/null; then
-        docker exec $NGINX_CONTAINER cat /etc/nginx/conf.d/.active 2>/dev/null
+    # Extract current backend from default.conf using grep and sed
+    if docker exec $NGINX_CONTAINER test -f /etc/nginx/conf.d/default.conf 2>/dev/null; then
+        local current=$(docker exec $NGINX_CONTAINER grep -o 'backend-[a-z]*:8000' /etc/nginx/conf.d/default.conf 2>/dev/null | head -1 | sed 's/backend-\([a-z]*\):8000/\1/')
+        if [ -n "$current" ]; then
+            echo "$current"
+        else
+            echo "blue"  # Default
+        fi
     else
         echo "blue"  # Default
     fi
-}
-
-# Set active backend
-set_active_backend() {
-    local color=$1
-    echo "$color" > nginx/conf.d/.active
-    
-    # Update nginx configuration
-    cat > nginx/conf.d/active.conf << EOF
-# Active backend configuration
-# Updated at $(date)
-# DO NOT EDIT MANUALLY
-
-upstream backend_active {
-    server backend-${color}:8000 max_fails=3 fail_timeout=30s;
-    keepalive 32;
-}
-EOF
 }
 
 # Check container health
@@ -139,6 +125,16 @@ main() {
         log "Starting nginx..."
         docker-compose -f $COMPOSE_FILE up -d nginx
         sleep 3
+        
+        # Clean up any old active.conf files that might exist
+        log "Cleaning up old nginx configuration files..."
+        docker exec $NGINX_CONTAINER rm -f /etc/nginx/conf.d/active.conf 2>/dev/null || true
+        docker exec $NGINX_CONTAINER rm -f /etc/nginx/conf.d/.active 2>/dev/null || true
+    else
+        # Clean up old files on running container
+        log "Cleaning up old nginx configuration files..."
+        docker exec $NGINX_CONTAINER rm -f /etc/nginx/conf.d/active.conf 2>/dev/null || true
+        docker exec $NGINX_CONTAINER rm -f /etc/nginx/conf.d/.active 2>/dev/null || true
     fi
     
     # Switch traffic to new container using DNS variable approach
