@@ -53,6 +53,9 @@ docker container prune -f
 docker image prune -f
 docker network prune -f
 
+echo "Creating fresh network..."
+docker network create --driver bridge --subnet 172.20.0.0/16 skinsense_network 2>/dev/null || true
+
 echo -e "${GREEN}✓ Cleanup complete${NC}"
 echo ""
 echo "To redeploy, run:"

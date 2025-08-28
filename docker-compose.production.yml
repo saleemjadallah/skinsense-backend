@@ -113,11 +113,8 @@ services:
 
 networks:
   skinsense_network:
+    external: true
     name: skinsense_network
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
 
 volumes:
   redis_data:
