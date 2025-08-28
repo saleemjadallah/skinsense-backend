@@ -9,8 +9,8 @@ from ...models.achievement import (
     AchievementCategory, AchievementDifficulty, ACHIEVEMENT_DEFINITIONS
 )
 from ...services.achievement_service import AchievementService
-from ...core.security import get_current_user
-from ...models.user import User
+from ..deps import get_current_user
+from ...models.user import UserModel
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ achievement_service = AchievementService()
 
 @router.get("/", response_model=Dict[str, Any])
 async def get_user_achievements(
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
     category: Optional[AchievementCategory] = None,
     unlocked_only: bool = False
 ):
@@ -69,7 +69,7 @@ async def get_achievement_definitions(
 
 @router.get("/stats", response_model=Dict[str, Any])
 async def get_achievement_stats(
-    current_user: User = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_user)
 ):
     """Get achievement statistics for the current user"""
     try:
@@ -83,7 +83,7 @@ async def get_achievement_stats(
 @router.get("/{achievement_id}", response_model=Dict[str, Any])
 async def get_achievement_detail(
     achievement_id: str,
-    current_user: User = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_user)
 ):
     """Get detailed information about a specific achievement"""
     try:
@@ -105,7 +105,7 @@ async def get_achievement_detail(
 async def update_achievement_progress(
     achievement_id: str,
     progress_update: AchievementProgress,
-    current_user: User = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_user)
 ):
     """Update progress for a specific achievement (client-side update)"""
     try:
@@ -135,7 +135,7 @@ async def update_achievement_progress(
 @router.post("/{achievement_id}/unlock", response_model=Dict[str, Any])
 async def unlock_achievement(
     achievement_id: str,
-    current_user: User = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_user)
 ):
     """Mark an achievement as unlocked (client-side notification)"""
     try:
@@ -165,7 +165,7 @@ async def unlock_achievement(
 @router.post("/track", response_model=Dict[str, Any])
 async def track_achievement_action(
     action: AchievementAction,
-    current_user: User = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_user)
 ):
     """Track a user action that might affect achievement progress"""
     try:
@@ -185,7 +185,7 @@ async def track_achievement_action(
 @router.post("/sync", response_model=Dict[str, Any])
 async def sync_achievements(
     sync_data: AchievementSync,
-    current_user: User = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_user)
 ):
     """
     Sync achievement progress from client.
@@ -208,7 +208,7 @@ async def sync_achievements(
 
 @router.post("/initialize", response_model=Dict[str, Any])
 async def initialize_achievements(
-    current_user: User = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_user)
 ):
     """Initialize all achievements for the current user (called on first app launch)"""
     try:
@@ -226,7 +226,7 @@ async def initialize_achievements(
 
 @router.post("/verify-all", response_model=Dict[str, Any])
 async def verify_all_achievements(
-    current_user: User = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
     admin_key: str = Query(None, description="Admin key for verification")
 ):
     """
@@ -249,7 +249,7 @@ async def verify_all_achievements(
 
 @router.post("/track/analysis-completed", response_model=Dict[str, Any])
 async def track_analysis_completed(
-    current_user: User = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_user)
 ):
     """Track that a skin analysis was completed"""
     action = AchievementAction(
@@ -262,7 +262,7 @@ async def track_analysis_completed(
 @router.post("/track/daily-checkin", response_model=Dict[str, Any])
 async def track_daily_checkin(
     streak_days: int,
-    current_user: User = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_user)
 ):
     """Track a daily check-in with streak information"""
     action = AchievementAction(
@@ -275,7 +275,7 @@ async def track_daily_checkin(
 @router.post("/track/goal-created", response_model=Dict[str, Any])
 async def track_goal_created(
     goal_id: str,
-    current_user: User = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_user)
 ):
     """Track that a goal was created"""
     action = AchievementAction(
@@ -289,7 +289,7 @@ async def track_goal_created(
 async def track_routine_created(
     has_morning: bool,
     has_evening: bool,
-    current_user: User = Depends(get_current_user)
+    current_user: UserModel = Depends(get_current_user)
 ):
     """Track that a routine was created"""
     action = AchievementAction(

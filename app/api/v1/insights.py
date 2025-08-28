@@ -49,7 +49,7 @@ async def get_daily_insights(current_user: UserModel = Depends(get_current_user)
         
         # Generate or retrieve insights
         insights_service = get_insights_service()
-        insights = insights_service.generate_daily_insights(str(current_user.id))
+        insights = await insights_service.generate_daily_insights(str(current_user.id))
         
         if not insights:
             raise HTTPException(
@@ -92,14 +92,14 @@ async def generate_new_insights(
             today = date.today()
             start_of_day = datetime.combine(today, datetime.min.time())
             end_of_day = datetime.combine(today, datetime.max.time())
-            db.daily_insights.delete_many({
+            db.database.daily_insights.delete_many({
                 "user_id": ObjectId(str(current_user.id)),
                 "generated_for_date": {"$gte": start_of_day, "$lte": end_of_day}
             })
         
         # Generate new insights
         insights_service = get_insights_service()
-        insights = insights_service.generate_daily_insights(str(current_user.id))
+        insights = await insights_service.generate_daily_insights(str(current_user.id))
         
         if not insights:
             raise HTTPException(
@@ -130,7 +130,7 @@ async def track_insight_interaction(
     """
     try:
         # Verify the insights belong to the user
-        insights = db.daily_insights.find_one({
+        insights = db.database.daily_insights.find_one({
             "_id": ObjectId(insights_id),
             "user_id": ObjectId(str(current_user.id))
         })
@@ -168,7 +168,7 @@ async def get_insights_history(
     """
     try:
         # Retrieve historical insights
-        insights_cursor = db.daily_insights.find(
+        insights_cursor = db.database.daily_insights.find(
             {"user_id": ObjectId(str(current_user.id))},
             sort=[("created_at", -1)],
             limit=limit
@@ -201,7 +201,7 @@ async def get_insight_preferences(current_user: UserModel = Depends(get_current_
     Get user's insight preferences
     """
     try:
-        user = db.users.find_one({"_id": ObjectId(str(current_user.id))})
+        user = db.database.users.find_one({"_id": ObjectId(str(current_user.id))})
         
         preferences = user.get("insights_preferences", {
             "preferred_categories": [],
@@ -239,7 +239,7 @@ async def update_insight_preferences(
             update_data["insights_preferences.opt_out"] = preferences.opt_out
         
         if update_data:
-            db.users.update_one(
+            db.database.users.update_one(
                 {"_id": ObjectId(str(current_user.id))},
                 {"$set": update_data}
             )

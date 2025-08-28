@@ -1780,7 +1780,7 @@ async def populate_sample_data(
         "user_id": str(current_user.id)
     }
 
-@router.get("/analysis/calendar/insights", response_model=Dict[str, Any])
+@router.get("/calendar/insights", response_model=Dict[str, Any])
 async def get_calendar_ai_insights(
     current_user: UserModel = Depends(get_current_active_user),
     db: Database = Depends(get_database),

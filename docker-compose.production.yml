@@ -1,103 +1,123 @@
 version: '3.8'
 
 services:
+  # Nginx Load Balancer
   nginx:
     image: nginx:alpine
     container_name: skinsense_nginx
     ports:
       - "80:80"
-      - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:rw
     depends_on:
       - backend-blue
     networks:
-      - skinsense-network
+      - skinsense_network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost/health"]
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
+  # Blue Backend
   backend-blue:
-    build: 
+    build:
       context: .
       dockerfile: Dockerfile
     container_name: skinsense_backend_blue
+    hostname: backend-blue
     expose:
       - "8000"
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --timeout-keep-alive=65 --workers 2
     env_file:
       - .env
     environment:
       - SERVICE_COLOR=blue
       - REDIS_URL=redis://redis:6379
-      - ENVIRONMENT=production
-      - DEBUG=false
     depends_on:
       redis:
         condition: service_healthy
     networks:
-      - skinsense-network
+      - skinsense_network
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 5s
-      timeout: 3s
+      interval: 10s
+      timeout: 5s
       retries: 5
-      start_period: 30s
-    restart: unless-stopped
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
 
+  # Green Backend (Initially inactive)
   backend-green:
-    build: 
+    build:
       context: .
       dockerfile: Dockerfile
     container_name: skinsense_backend_green
+    hostname: backend-green
     expose:
       - "8000"
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --timeout-keep-alive=65 --workers 2
     env_file:
       - .env
     environment:
       - SERVICE_COLOR=green
       - REDIS_URL=redis://redis:6379
-      - ENVIRONMENT=production
-      - DEBUG=false
     depends_on:
       redis:
         condition: service_healthy
     networks:
-      - skinsense-network
+      - skinsense_network
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 5s
-      timeout: 3s
+      interval: 10s
+      timeout: 5s
       retries: 5
-      start_period: 30s
-    restart: unless-stopped
-    profiles: ["green"]  # Initially inactive
+      start_period: 40s
+    profiles: ["green"]  # Only starts when explicitly enabled
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
 
+  # Redis Cache
   redis:
-    image: redis:7.2-alpine
+    image: redis:7-alpine
     container_name: skinsense_redis
     networks:
-      - skinsense-network
+      - skinsense_network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 10s
     volumes:
       - redis_data:/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 networks:
-  skinsense-network:
-    driver: bridge
+  skinsense_network:
     name: skinsense_network
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
 
 volumes:
   redis_data:
