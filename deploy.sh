@@ -94,7 +94,17 @@ check_health() {
 main() {
     log "Starting zero-downtime deployment..."
     
-    # Ensure network exists
+    # Fix network issues from old deployments
+    if docker network inspect $NETWORK_NAME >/dev/null 2>&1; then
+        # Check if network has wrong label
+        NETWORK_LABEL=$(docker network inspect $NETWORK_NAME --format '{{index .Labels "com.docker.compose.network"}}' 2>/dev/null || echo "")
+        if [ "$NETWORK_LABEL" != "" ] && [ "$NETWORK_LABEL" != "skinsense_network" ]; then
+            warning "Found network with incorrect label, recreating..."
+            docker network rm $NETWORK_NAME 2>/dev/null || true
+        fi
+    fi
+    
+    # Ensure network exists with correct configuration
     if ! docker network inspect $NETWORK_NAME >/dev/null 2>&1; then
         log "Creating network $NETWORK_NAME..."
         docker network create --driver bridge --subnet 172.20.0.0/16 $NETWORK_NAME

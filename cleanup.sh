@@ -34,10 +34,12 @@ docker rm -f skinsense_backend_blue 2>/dev/null || true
 docker rm -f skinsense_backend_green 2>/dev/null || true
 docker rm -f skinsense_redis 2>/dev/null || true
 
-echo "Removing network..."
+echo "Removing networks..."
 
-# Remove network
+# Remove all possible network names
 docker network rm skinsense_network 2>/dev/null || true
+docker network rm skinsense-network 2>/dev/null || true
+docker network rm app_network 2>/dev/null || true
 
 echo "Cleaning up volumes..."
 
