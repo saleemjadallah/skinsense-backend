@@ -144,8 +144,8 @@ main() {
     # Switch traffic to new container
     log "Switching traffic to $NEW_COLOR..."
     
-    # Update nginx config directly
-    docker exec $NGINX_CONTAINER sh -c "cat > /etc/nginx/conf.d/default.conf << 'EOF'
+    # Create nginx config file locally first
+    cat > /tmp/nginx-active.conf << EOF
 server {
     listen 80 default_server;
     server_name _;
@@ -153,10 +153,10 @@ server {
     location / {
         proxy_pass http://backend-${NEW_COLOR}:8000;
         proxy_http_version 1.1;
-        proxy_set_header Host \\\$host;
-        proxy_set_header X-Real-IP \\\$remote_addr;
-        proxy_set_header X-Forwarded-For \\\$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \\\$scheme;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
     
     location /health {
@@ -164,7 +164,10 @@ server {
         proxy_pass http://backend-${NEW_COLOR}:8000/health;
     }
 }
-EOF"
+EOF
+    
+    # Copy config to nginx container
+    docker cp /tmp/nginx-active.conf $NGINX_CONTAINER:/etc/nginx/conf.d/default.conf
     
     # Reload nginx
     if docker exec $NGINX_CONTAINER nginx -t 2>/dev/null; then
@@ -172,6 +175,7 @@ EOF"
         success "Traffic switched to $NEW_COLOR"
     else
         error "Nginx configuration test failed"
+        docker exec $NGINX_CONTAINER cat /etc/nginx/conf.d/default.conf
     fi
     
     # Wait for connections to drain
