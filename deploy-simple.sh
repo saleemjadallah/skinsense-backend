@@ -21,10 +21,15 @@ log "Starting simple deployment..."
 log "Stopping existing containers..."
 docker-compose -f docker-compose.yml down || true
 
-# Force remove any conflicting containers
+# Force remove any conflicting containers (including old blue-green containers)
 log "Cleaning up any conflicting containers..."
 docker stop skinsense_nginx skinsense_backend skinsense_redis 2>/dev/null || true
 docker rm skinsense_nginx skinsense_backend skinsense_redis 2>/dev/null || true
+
+# Clean up old blue-green deployment containers if they exist
+log "Removing old blue-green deployment containers..."
+docker stop skinsense_backend_blue skinsense_backend_green 2>/dev/null || true
+docker rm skinsense_backend_blue skinsense_backend_green 2>/dev/null || true
 
 # Clean up resources
 log "Cleaning up Docker resources..."
@@ -55,10 +60,10 @@ done
 
 # Final verification
 log "Verifying external access..."
-if curl -sf http://localhost/health >/dev/null 2>&1; then
-    success "Deployment successful! API is accessible"
+if curl -sf http://localhost:8080/health >/dev/null 2>&1; then
+    success "Deployment successful! API is accessible on port 8080"
 else
-    success "Containers are running - may need DNS/host configuration"
+    success "Containers are running - nginx proxy accessible on port 8080"
 fi
 
 # Show status
