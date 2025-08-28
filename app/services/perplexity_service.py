@@ -10,10 +10,30 @@ import re
 
 from app.core.config import settings
 from app.models.user import UserModel
+from app.services.affiliate_service import get_affiliate_service
 
 logger = logging.getLogger(__name__)
 
 class PerplexityRecommendationService:
+    """
+    Service for generating personalized product recommendations using Perplexity AI
+    
+    ORBO Skin Analysis Metrics (10 metrics, each scored 0-100):
+    1. overall_skin_health_score - Overall skin health and condition
+    2. hydration - Skin moisture levels
+    3. smoothness - Texture quality and smoothness
+    4. radiance - Natural glow and luminosity  
+    5. dark_spots - Pigmentation uniformity (100 = no dark spots)
+    6. firmness - Skin elasticity and tightness
+    7. fine_lines_wrinkles - Signs of aging (100 = no wrinkles)
+    8. acne - Blemish/breakout levels (100 = clear skin)
+    9. dark_circles - Under-eye area condition (100 = no dark circles)
+    10. redness - Sensitivity/irritation levels (100 = no redness)
+    
+    All metrics are normalized where 100 is the best possible score.
+    Metrics below 70 are considered areas needing attention.
+    """
+    
     def __init__(self):
         # Use longer timeout for more reliable responses
         self.client = httpx.AsyncClient(timeout=60.0)
@@ -41,6 +61,9 @@ class PerplexityRecommendationService:
         Generate personalized product recommendations using Perplexity + smart caching
         """
         try:
+            # Initialize affiliate service
+            affiliate_service = get_affiliate_service(db)
+            
             # Step 1: Check user's cached favorites first
             cached_recommendations = await self._get_cached_recommendations(
                 user, skin_analysis, db, limit=3
@@ -87,7 +110,29 @@ class PerplexityRecommendationService:
                     "location": user_location
                 }
             
-            # Step 4: Build complete response
+            # Step 4: Add affiliate links to all recommendations
+            for product in all_recommendations:
+                # Generate affiliate links for each product
+                affiliate_data = affiliate_service.generate_affiliate_link(
+                    product,
+                    user.id,
+                    skin_analysis.get('_id')
+                )
+                
+                # Add affiliate data to product
+                product['affiliate_link'] = affiliate_data['affiliate_link']
+                product['tracking_link'] = affiliate_data['tracking_link']
+                product['tracking_id'] = affiliate_data.get('tracking_id')
+                product['estimated_commission'] = affiliate_data.get('estimated_commission')
+                
+                # Ensure retailer is set
+                if not product.get('retailer') and product.get('availability'):
+                    # Try to detect retailer from availability data
+                    online_stores = product['availability'].get('online_stores', [])
+                    if online_stores:
+                        product['retailer'] = online_stores[0].lower().replace('.com', '')
+            
+            # Step 5: Build complete response
             return {
                 "recommendations": all_recommendations[:limit],
                 "routine_suggestions": self._build_routine_from_products(all_recommendations),
@@ -232,22 +277,18 @@ class PerplexityRecommendationService:
         # Log what we found for debugging
         logger.info(f"ORBO metrics found: {metrics.keys() if metrics else 'No metrics found'}")
         
-        # Map ORBO metrics to our prompt template scores
-        # These are already in 0-100 format from the backend
-        overall_score = metrics.get("overall_skin_health_score", 70)
-        hydration_score = metrics.get("hydration", 70)
-        acne_score = metrics.get("acne", 70)  # Already inverted by backend
-        wrinkles_score = metrics.get("fine_lines_wrinkles", 70)  # Already inverted
-        pigmentation_score = metrics.get("dark_spots", 70)  # Already inverted
-        texture_score = metrics.get("smoothness", 70)
-        sensitivity_score = metrics.get("redness", 70)  # Already inverted
-        firmness_score = metrics.get("firmness", 70)
-        brightness_score = metrics.get("radiance", 70)
-        undereye_score = metrics.get("dark_circles", 70)  # Already inverted
-        
-        # For pores and oiliness, we'll use related metrics
-        pores_score = 100 - metrics.get("acne", 30)  # Use acne as proxy for pores
-        oiliness_score = 100 - metrics.get("radiance", 50)  # Use radiance inverse as proxy for oiliness
+        # Map all 10 ORBO metrics directly - these are the actual metrics from ORBO
+        # All scores are already in 0-100 format where 100 is best
+        overall_score = metrics.get("overall_skin_health_score", 70)  # Metric 1: Overall skin health
+        hydration_score = metrics.get("hydration", 70)                # Metric 2: Hydration level
+        smoothness_score = metrics.get("smoothness", 70)              # Metric 3: Skin smoothness/texture
+        radiance_score = metrics.get("radiance", 70)                  # Metric 4: Skin radiance/glow
+        dark_spots_score = metrics.get("dark_spots", 70)              # Metric 5: Dark spots/pigmentation (100=no spots)
+        firmness_score = metrics.get("firmness", 70)                  # Metric 6: Skin firmness/elasticity
+        wrinkles_score = metrics.get("fine_lines_wrinkles", 70)       # Metric 7: Fine lines & wrinkles (100=no wrinkles)
+        acne_score = metrics.get("acne", 70)                          # Metric 8: Acne/blemishes (100=clear skin)
+        dark_circles_score = metrics.get("dark_circles", 70)          # Metric 9: Dark circles (100=no dark circles)
+        redness_score = metrics.get("redness", 70)                    # Metric 10: Redness/sensitivity (100=no redness)
         
         # Extract required ingredients from ORBO analysis
         required_ingredients = orbo_data.get("recommended_ingredients", [])
@@ -271,21 +312,19 @@ class PerplexityRecommendationService:
         local_climate = self._determine_climate(state)
         current_season = self._get_current_season()
         
-        query = f"""Based on the following skin analysis results, user profile, and location, provide personalized skincare product recommendations that are available for purchase in the user's area:
+        query = f"""Based on the following comprehensive skin analysis results from ORBO AI, user profile, and location, provide personalized skincare product recommendations that are available for purchase in the user's area:
 
-**SKIN ANALYSIS DATA (from ORBO):**
-- Overall Skin Health Score: {overall_score}/100
-- Hydration Level: {hydration_score}/100
-- Acne/Blemishes: {acne_score}/100
-- Fine Lines/Wrinkles: {wrinkles_score}/100
-- Dark Spots/Pigmentation: {pigmentation_score}/100
-- Pore Size: {pores_score}/100
-- Skin Texture/Smoothness: {texture_score}/100
-- Redness/Sensitivity: {sensitivity_score}/100
-- Oiliness Level: {oiliness_score}/100
-- Firmness/Elasticity: {firmness_score}/100
-- Brightness/Radiance: {brightness_score}/100
-- Under-eye Area: {undereye_score}/100
+**COMPLETE SKIN ANALYSIS DATA (10 ORBO METRICS):**
+1. Overall Skin Health Score: {overall_score}/100
+2. Hydration Level: {hydration_score}/100
+3. Smoothness (Texture Quality): {smoothness_score}/100
+4. Radiance (Natural Glow): {radiance_score}/100
+5. Dark Spots (Pigmentation): {dark_spots_score}/100 (Higher = fewer spots)
+6. Firmness (Elasticity): {firmness_score}/100
+7. Fine Lines & Wrinkles: {wrinkles_score}/100 (Higher = fewer wrinkles)
+8. Acne (Blemishes): {acne_score}/100 (Higher = clearer skin)
+9. Dark Circles (Under-eye): {dark_circles_score}/100 (Higher = less visible)
+10. Redness (Sensitivity): {redness_score}/100 (Higher = less redness)
 
 **REQUIRED INGREDIENTS (from ORBO analysis):
 {', '.join(required_ingredients) if required_ingredients else 'Hyaluronic Acid, Niacinamide, Ceramides'}
@@ -306,8 +345,9 @@ class PerplexityRecommendationService:
 Please provide a comprehensive response with the following structure:
 
 1. **PRIORITY ANALYSIS** (2-3 sentences)
-   - Identify the top 3 skin concerns based on the lowest scores
-   - Explain how the required ingredients address these concerns
+   - Identify the top 3 skin concerns based on the lowest scores among all 10 ORBO metrics
+   - Focus on metrics scoring below 70/100 as priority areas
+   - Explain how the required ingredients address these specific concerns
 
 2. **PRODUCT RECOMMENDATIONS** (organized by routine step)
    For each product category needed, provide:
@@ -373,7 +413,26 @@ Focus on finding {limit} highly-rated products that are currently in stock and m
         """
         System prompt for Perplexity to ensure consistent, structured responses
         """
-        return """You are SkinSense AI's intelligent beauty advisor, specialized in providing personalized skincare product recommendations based on scientific skin analysis data, user preferences, and location-specific availability. Your role is to bridge the gap between professional skin analysis results and actionable, purchase-ready product recommendations.
+        return """You are SkinSense AI's intelligent beauty advisor, specialized in providing personalized skincare product recommendations based on comprehensive ORBO AI skin analysis data with 10 key metrics. Your role is to bridge the gap between professional skin analysis results and actionable, purchase-ready product recommendations.
+
+SKIN ANALYSIS EXPERTISE:
+You will receive 10 ORBO skin metrics (each scored 0-100, where 100 is best):
+1. Overall Skin Health Score - General skin condition
+2. Hydration - Moisture levels in the skin
+3. Smoothness - Texture quality and smoothness
+4. Radiance - Natural glow and luminosity
+5. Dark Spots - Pigmentation uniformity (100 = no spots)
+6. Firmness - Skin elasticity and tightness
+7. Fine Lines & Wrinkles - Aging signs (100 = no wrinkles)
+8. Acne - Blemish levels (100 = clear skin)
+9. Dark Circles - Under-eye area condition (100 = no circles)
+10. Redness - Sensitivity and irritation (100 = no redness)
+
+RECOMMENDATION PRIORITIES:
+- Focus on metrics scoring below 70/100 as priority concerns
+- Match products to address the lowest-scoring metrics first
+- Recommend ingredients scientifically proven for each specific metric
+- Consider interactions between different skin concerns
 
 IMPORTANT GUIDELINES:
 - Only recommend products that are currently available and in stock
@@ -382,13 +441,14 @@ IMPORTANT GUIDELINES:
 - Focus on products with proven ingredients for their specific concerns
 - Ensure all recommendations are from reputable brands and retailers
 - Include practical usage instructions
-- Explain why each product matches their skin analysis results
+- Explain why each product matches their specific skin analysis results
 - Prioritize products with strong customer reviews and ratings
 - Be sensitive to the user's experience level with skincare
 - Consider local climate and seasonal factors
 
 FORMAT REQUIREMENTS:
 - Follow the exact structure requested in the prompt
+- Always analyze all 10 metrics to identify top concerns
 - Structure responses clearly with product details
 - Include both online and local availability 
 - Provide price ranges, not exact prices
@@ -1069,38 +1129,59 @@ FORMAT REQUIREMENTS:
 
     def _determine_required_ingredients(self, metrics: Dict[str, Any], skin_analysis: Dict[str, Any]) -> List[str]:
         """
-        Determine required ingredients based on skin scores and concerns
+        Determine required ingredients based on all 10 ORBO skin metrics
+        Prioritize ingredients for metrics scoring below 70/100
         """
         ingredients = []
         concerns = skin_analysis.get("concerns", [])
         
-        # Hydration concerns (score below 70 needs attention)
+        # Metric 1: Overall Skin Health (below 70 needs comprehensive care)
+        if metrics.get("overall_skin_health_score", 100) < 70:
+            ingredients.extend(["Niacinamide", "Ceramides", "Peptides"])
+        
+        # Metric 2: Hydration (below 70 needs moisture boost)
         if metrics.get("hydration", 100) < 70 or "dryness" in concerns:
             ingredients.extend(["Hyaluronic Acid", "Ceramides", "Glycerin", "Squalane"])
         
-        # Texture and anti-aging (smoothness and fine lines)
-        if metrics.get("smoothness", 100) < 70 or metrics.get("fine_lines_wrinkles", 100) < 70:
-            ingredients.extend(["Retinol", "Peptides", "Niacinamide", "Vitamin C"])
+        # Metric 3: Smoothness/Texture (below 70 needs exfoliation)
+        if metrics.get("smoothness", 100) < 70:
+            ingredients.extend(["AHA (Glycolic/Lactic Acid)", "BHA (Salicylic Acid)", "Retinol", "Niacinamide"])
         
-        # Pigmentation and dark spots (score below 70 needs attention)
+        # Metric 4: Radiance/Glow (below 70 needs brightening)
+        if metrics.get("radiance", 100) < 70:
+            ingredients.extend(["Vitamin C", "Niacinamide", "Alpha Arbutin", "Licorice Root Extract"])
+        
+        # Metric 5: Dark Spots/Pigmentation (below 70 needs spot treatment)
         if metrics.get("dark_spots", 100) < 70 or "hyperpigmentation" in concerns:
-            ingredients.extend(["Vitamin C", "Kojic Acid", "Alpha Arbutin", "Tranexamic Acid"])
+            ingredients.extend(["Vitamin C", "Kojic Acid", "Alpha Arbutin", "Tranexamic Acid", "Azelaic Acid"])
         
-        # Acne and clarity (score below 70 needs attention)
+        # Metric 6: Firmness/Elasticity (below 70 needs firming)
+        if metrics.get("firmness", 100) < 70:
+            ingredients.extend(["Retinol", "Peptides", "Vitamin C", "Collagen-boosting Peptides", "Bakuchiol"])
+        
+        # Metric 7: Fine Lines & Wrinkles (below 70 needs anti-aging)
+        if metrics.get("fine_lines_wrinkles", 100) < 70:
+            ingredients.extend(["Retinol/Retinoids", "Peptides", "Vitamin C", "Hyaluronic Acid", "Bakuchiol"])
+        
+        # Metric 8: Acne/Blemishes (below 70 needs acne treatment)
         if metrics.get("acne", 100) < 70 or "acne" in concerns:
-            ingredients.extend(["Salicylic Acid", "Benzoyl Peroxide", "Niacinamide", "Tea Tree Oil"])
+            ingredients.extend(["Salicylic Acid", "Benzoyl Peroxide", "Niacinamide", "Tea Tree Oil", "Azelaic Acid"])
         
-        # Redness and sensitivity (score below 70 needs attention)
-        if metrics.get("redness", 100) < 70 or "sensitivity" in concerns:
-            ingredients.extend(["Centella Asiatica", "Allantoin", "Oat Extract", "Ceramides"])
-        
-        # Dark circles (score below 70 needs attention)
+        # Metric 9: Dark Circles (below 70 needs under-eye care)
         if metrics.get("dark_circles", 100) < 70:
-            ingredients.extend(["Caffeine", "Vitamin K", "Retinol", "Peptides"])
+            ingredients.extend(["Caffeine", "Vitamin K", "Retinol", "Peptides", "Vitamin C", "Niacinamide"])
         
-        # Remove duplicates and return top ingredients
-        unique_ingredients = list(dict.fromkeys(ingredients))
-        return unique_ingredients[:8]  # Return top 8 ingredients
+        # Metric 10: Redness/Sensitivity (below 70 needs calming)
+        if metrics.get("redness", 100) < 70 or "sensitivity" in concerns:
+            ingredients.extend(["Centella Asiatica", "Allantoin", "Oat Extract", "Ceramides", "Green Tea Extract", "Chamomile"])
+        
+        # Remove duplicates and prioritize by frequency
+        from collections import Counter
+        ingredient_counts = Counter(ingredients)
+        # Sort by frequency (most recommended first)
+        sorted_ingredients = [ing for ing, _ in ingredient_counts.most_common()]
+        
+        return sorted_ingredients[:10]  # Return top 10 most relevant ingredients
     
     def _format_age_range(self, age_range: str) -> str:
         """
