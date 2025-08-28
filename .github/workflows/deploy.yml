@@ -112,19 +112,21 @@ jobs:
     - name: Health check
       run: |
         echo "🏥 Performing health check..."
-        sleep 10
+        sleep 15
         
-        # Check API health
+        # Check API health using the actual domain
         for i in {1..30}; do
-          if curl -sf "http://${{ secrets.EC2_HOST }}/health" > /dev/null; then
+          if curl -sf "http://api.skinsense.app/health" > /dev/null || curl -sf "http://56.228.12.81/health" > /dev/null; then
             echo "✅ API is healthy!"
             exit 0
           fi
           echo "⏳ Waiting for API... ($i/30)"
-          sleep 2
+          sleep 3
         done
         
         echo "❌ Health check failed!"
+        echo "Debugging: Testing direct connection..."
+        curl -I "http://56.228.12.81/health" || true
         exit 1
     
     - name: Cleanup
