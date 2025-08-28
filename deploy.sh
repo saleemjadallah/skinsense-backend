@@ -143,11 +143,28 @@ main() {
     
     # Switch traffic to new container
     log "Switching traffic to $NEW_COLOR..."
-    set_active_backend $NEW_COLOR
     
-    # Copy configuration to nginx container
-    docker cp nginx/conf.d/active.conf $NGINX_CONTAINER:/etc/nginx/conf.d/
-    docker cp nginx/conf.d/.active $NGINX_CONTAINER:/etc/nginx/conf.d/ 2>/dev/null || true
+    # Update nginx config directly
+    docker exec $NGINX_CONTAINER sh -c "cat > /etc/nginx/conf.d/default.conf << 'EOF'
+server {
+    listen 80 default_server;
+    server_name _;
+    
+    location / {
+        proxy_pass http://backend-${NEW_COLOR}:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host \\\$host;
+        proxy_set_header X-Real-IP \\\$remote_addr;
+        proxy_set_header X-Forwarded-For \\\$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \\\$scheme;
+    }
+    
+    location /health {
+        access_log off;
+        proxy_pass http://backend-${NEW_COLOR}:8000/health;
+    }
+}
+EOF"
     
     # Reload nginx
     if docker exec $NGINX_CONTAINER nginx -t 2>/dev/null; then
