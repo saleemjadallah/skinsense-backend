@@ -40,9 +40,11 @@ def _add_connection_params(url: str) -> str:
                 'w': 'majority',
                 'tlsDisableOCSPEndpointCheck': 'true',  # Critical for SSL issues
                 'tlsAllowInvalidHostnames': 'false',
-                'maxPoolSize': '50',
-                'minPoolSize': '10',
-                'maxIdleTimeMS': '45000'
+                'maxPoolSize': '100',  # Increased for better concurrency
+                'minPoolSize': '20',   # Keep more connections warm
+                'maxIdleTimeMS': '120000',  # Keep connections alive for 2 minutes
+                'serverSelectionTimeoutMS': '5000',
+                'socketTimeoutMS': '45000'
             }
             
             # Merge parameters (existing params take precedence)
@@ -129,19 +131,22 @@ def connect_to_mongo():
                 # MongoDB Atlas connection with proper SSL handling
                 db.client = MongoClient(
                     connection_url,
-                    serverSelectionTimeoutMS=15000,  # Increased timeout
-                    connectTimeoutMS=30000,          # Increased timeout
-                    socketTimeoutMS=30000,           # Increased timeout
-                    maxPoolSize=50,                  # Connection pooling
-                    minPoolSize=10,
-                    maxIdleTimeMS=45000,
+                    serverSelectionTimeoutMS=5000,   # Faster initial connection
+                    connectTimeoutMS=10000,          # Reasonable connect timeout
+                    socketTimeoutMS=45000,           # Good socket timeout
+                    maxPoolSize=100,                 # Increased pool size for concurrency
+                    minPoolSize=20,                  # Keep 20 connections always warm
+                    maxIdleTimeMS=120000,            # Keep connections alive for 2 minutes
                     waitQueueTimeoutMS=10000,
                     retryWrites=True,
                     retryReads=True,
                     w='majority',                    # Write concern
                     tls=True,                        # Explicitly enable TLS
                     tlsCAFile=certifi.where(),       # Use certifi certificates
-                    tlsAllowInvalidHostnames=False   # Keep hostname validation
+                    tlsAllowInvalidHostnames=False,  # Keep hostname validation
+                    maxConnecting=10,                # Max concurrent connection attempts
+                    heartbeatFrequencyMS=10000,     # Heartbeat every 10 seconds to keep alive
+                    appName='skinsense-backend'     # For monitoring
                 )
             else:
                 # Local MongoDB connection
