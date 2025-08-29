@@ -227,21 +227,15 @@ class GoalService:
             # Get user's latest skin analysis
             logger.info("Searching for skin analysis...")
             if request.analysis_id:
-                # Try both ObjectId and string formats for user_id
+                # Use ObjectId format for user_id
                 analysis = self.db.skin_analyses.find_one({
                     "_id": ObjectId(request.analysis_id),
-                    "$or": [
-                        {"user_id": user_oid},  # ObjectId format
-                        {"user_id": user_id}     # String format
-                    ]
+                    "user_id": user_oid
                 })
             else:
-                # Get most recent analysis - try both formats
+                # Get most recent analysis - use ObjectId format
                 analysis = self.db.skin_analyses.find_one(
-                    {"$or": [
-                        {"user_id": user_oid},  # ObjectId format (most common)
-                        {"user_id": user_id}     # String format (legacy)
-                    ]},
+                    {"user_id": user_oid},
                     sort=[("created_at", -1)]
                 )
             
@@ -251,9 +245,7 @@ class GoalService:
                 
                 # Check what's actually in the database for debugging
                 count_oid = self.db.skin_analyses.count_documents({"user_id": user_oid})
-                count_str = self.db.skin_analyses.count_documents({"user_id": user_id})
                 logger.error(f"Debug: Found {count_oid} analyses with ObjectId({user_id})")
-                logger.error(f"Debug: Found {count_str} analyses with string '{user_id}'")
                 
                 # Check total count in database
                 total_count = self.db.skin_analyses.count_documents({})
@@ -720,18 +712,11 @@ class GoalService:
             # Get baseline value if parameter goal
             baseline_value = 0.0
             if goal_data.type == "parameter_improvement" and goal_data.target_parameter:
-                # Get latest analysis - use ObjectId first
+                # Get latest analysis - use ObjectId
                 analysis = self.db.skin_analyses.find_one(
                     {"user_id": user_oid},
                     sort=[("created_at", -1)]
                 )
-                
-                # If not found, try with string user_id for backward compatibility
-                if not analysis:
-                    analysis = self.db.skin_analyses.find_one(
-                        {"user_id": user_id},
-                        sort=[("created_at", -1)]
-                    )
                     
                 if analysis:
                     baseline_value = analysis.get("orbo_response", {}).get(
@@ -954,17 +939,20 @@ class GoalService:
                 logger.error(f"Could not convert user_id '{user_id}' to ObjectId")
                 raise ValueError(f"Invalid user_id format: {user_id}")
             
-            # Build query - use ObjectId first, but also check string for backward compatibility
-            query = {"$or": [{"user_id": user_oid}, {"user_id": user_id}]}
+            # Build query - only use ObjectId since we save as ObjectId
+            query = {"user_id": user_oid}
             if status:
                 query["status"] = status
             
+            logger.info(f"Querying goals with: user_id={user_oid}, status={status}")
+            
             # Get goals (PyMongo is synchronous)
             goals = list(self.db.goals.find(query).sort("created_at", -1).skip(skip).limit(limit))
+            logger.info(f"Found {len(goals)} goals for user {user_oid}")
             
             # Get counts by status
             pipeline = [
-                {"$match": {"$or": [{"user_id": user_oid}, {"user_id": user_id}]}},
+                {"$match": {"user_id": user_oid}},
                 {"$group": {
                     "_id": "$status",
                     "count": {"$sum": 1}
