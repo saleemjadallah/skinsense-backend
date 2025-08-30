@@ -781,6 +781,14 @@ class GoalService:
                 result = self.db.goals.insert_one(goal_dict)
                 goal.id = result.inserted_id
                 logger.info(f"✓ Goal saved successfully with ID: {result.inserted_id}")
+                
+                # Verify the goal was saved correctly
+                saved_goal = self.db.goals.find_one({"_id": result.inserted_id})
+                if saved_goal:
+                    logger.info(f"✓ Verification: Goal found in DB with user_id: {saved_goal.get('user_id')} (type: {type(saved_goal.get('user_id')).__name__})")
+                else:
+                    logger.error(f"❌ Verification failed: Goal not found after saving!")
+                    
             except Exception as db_error:
                 logger.error(f"❌ Database save failed: {str(db_error)}")
                 logger.error(f"Goal dict: {json.dumps(str(goal_dict)[:500])}")
@@ -929,14 +937,16 @@ class GoalService:
         skip: int = 0
     ) -> GoalListResponse:
         """Get all goals for a user"""
+        logger.info(f"=== get_user_goals called with user_id: {user_id} (type: {type(user_id).__name__}) ===")
         self.initialize()
         
         try:
             # Always convert user_id to ObjectId for consistency
             try:
                 user_oid = ObjectId(user_id)
-            except:
-                logger.error(f"Could not convert user_id '{user_id}' to ObjectId")
+                logger.info(f"Converted user_id to ObjectId: {user_oid}")
+            except Exception as e:
+                logger.error(f"Could not convert user_id '{user_id}' to ObjectId: {str(e)}")
                 raise ValueError(f"Invalid user_id format: {user_id}")
             
             # Build query - only use ObjectId since we save as ObjectId
@@ -944,11 +954,18 @@ class GoalService:
             if status:
                 query["status"] = status
             
-            logger.info(f"Querying goals with: user_id={user_oid}, status={status}")
+            logger.info(f"Querying goals with: user_id={user_oid} (type: {type(user_oid).__name__}), status={status}")
+            
+            # First, let's check what user_ids exist in the goals collection
+            sample_goals = list(self.db.goals.find({}).limit(5))
+            if sample_goals:
+                logger.info(f"Sample goals in DB:")
+                for sg in sample_goals:
+                    logger.info(f"  - Goal ID: {sg.get('_id')}, User ID: {sg.get('user_id')} (type: {type(sg.get('user_id')).__name__})")
             
             # Get goals (PyMongo is synchronous)
             goals = list(self.db.goals.find(query).sort("created_at", -1).skip(skip).limit(limit))
-            logger.info(f"Found {len(goals)} goals for user {user_oid}")
+            logger.info(f"Query returned {len(goals)} goals for user {user_oid}")
             
             # Get counts by status
             pipeline = [
