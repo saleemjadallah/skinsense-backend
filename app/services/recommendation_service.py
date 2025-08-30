@@ -196,7 +196,7 @@ class UnifiedRecommendationService:
                 }
             
             # Get product recommendations
-            recommendations = await self.perplexity.get_personalized_recommendations(
+            recommendations_result = await self.perplexity.get_personalized_recommendations(
                 user=user,
                 skin_analysis=skin_analysis,
                 user_location=user_location,
@@ -204,8 +204,9 @@ class UnifiedRecommendationService:
                 limit=5
             )
             
+            # Flatten the structure - recommendations_result already contains the full structure
             return {
-                "recommendations": recommendations,
+                **recommendations_result,  # Spread all fields from Perplexity response
                 "based_on": "latest_analysis" if latest_analysis else "user_profile",
                 "generated_at": datetime.utcnow().isoformat()
             }
