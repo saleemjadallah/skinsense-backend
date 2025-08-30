@@ -202,7 +202,7 @@ class PerplexityRecommendationService:
                         "Content-Type": "application/json"
                     },
                     json={
-                        "model": "llama-3.1-sonar-small-128k-online",  # Updated to latest online model for real-time product search
+                        "model": "sonar-small-online",  # Using valid Perplexity model for real-time product search
                         "messages": [
                             {
                                 "role": "system",
