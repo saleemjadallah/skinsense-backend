@@ -525,6 +525,21 @@ async def complete_ai_pipeline(
             detail=f"Failed to complete AI pipeline: {str(e)}"
         )
 
+@router.get("/config-check")
+async def check_configuration(
+    current_user: UserModel = Depends(get_current_active_user),
+):
+    """Check API configuration status (for debugging)"""
+    from app.core.config import settings
+    
+    return {
+        "perplexity_configured": bool(settings.PERPLEXITY_API_KEY),
+        "openai_configured": bool(settings.OPENAI_API_KEY),
+        "orbo_configured": bool(settings.ORBO_API_KEY or settings.ORBO_AI_API_KEY),
+        "aws_configured": bool(settings.AWS_ACCESS_KEY_ID),
+        "perplexity_key_prefix": settings.PERPLEXITY_API_KEY[:10] + "..." if settings.PERPLEXITY_API_KEY else "NOT SET"
+    }
+
 @router.get("/quick-recommendations", response_model=Dict[str, Any])
 async def get_quick_recommendations(
     city: str = "Los Angeles",
