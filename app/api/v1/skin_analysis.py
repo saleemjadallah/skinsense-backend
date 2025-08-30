@@ -530,15 +530,26 @@ async def check_configuration(
     current_user: UserModel = Depends(get_current_active_user),
 ):
     """Check API configuration status (for debugging)"""
-    from app.core.config import settings
-    
-    return {
-        "perplexity_configured": bool(settings.PERPLEXITY_API_KEY),
-        "openai_configured": bool(settings.OPENAI_API_KEY),
-        "orbo_configured": bool(settings.ORBO_API_KEY or settings.ORBO_AI_API_KEY),
-        "aws_configured": bool(settings.AWS_ACCESS_KEY_ID),
-        "perplexity_key_prefix": settings.PERPLEXITY_API_KEY[:10] + "..." if settings.PERPLEXITY_API_KEY else "NOT SET"
-    }
+    try:
+        from app.core.config import settings
+        
+        perplexity_key = settings.PERPLEXITY_API_KEY
+        openai_key = settings.OPENAI_API_KEY
+        
+        return {
+            "perplexity_configured": bool(perplexity_key),
+            "openai_configured": bool(openai_key),
+            "orbo_configured": bool(settings.ORBO_API_KEY or settings.ORBO_AI_API_KEY),
+            "aws_configured": bool(settings.AWS_ACCESS_KEY_ID),
+            "perplexity_key_prefix": perplexity_key[:10] + "..." if perplexity_key else "NOT SET",
+            "openai_key_prefix": openai_key[:10] + "..." if openai_key else "NOT SET"
+        }
+    except Exception as e:
+        logger.error(f"Config check error: {e}", exc_info=True)
+        return {
+            "error": str(e),
+            "message": "Failed to check configuration"
+        }
 
 @router.get("/quick-recommendations", response_model=Dict[str, Any])
 async def get_quick_recommendations(
