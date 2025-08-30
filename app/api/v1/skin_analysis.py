@@ -241,6 +241,68 @@ async def process_skin_analysis(
             }}
         )
 
+@router.get("/config-check")
+async def check_configuration(
+    current_user: UserModel = Depends(get_current_active_user),
+):
+    """Check API configuration status (for debugging)"""
+    try:
+        from app.core.config import settings
+        
+        perplexity_key = settings.PERPLEXITY_API_KEY
+        openai_key = settings.OPENAI_API_KEY
+        
+        return {
+            "perplexity_configured": bool(perplexity_key),
+            "openai_configured": bool(openai_key),
+            "orbo_configured": bool(settings.ORBO_API_KEY or settings.ORBO_AI_API_KEY),
+            "aws_configured": bool(settings.AWS_ACCESS_KEY_ID),
+            "perplexity_key_prefix": perplexity_key[:10] + "..." if perplexity_key else "NOT SET",
+            "openai_key_prefix": openai_key[:10] + "..." if openai_key else "NOT SET"
+        }
+    except Exception as e:
+        logger.error(f"Config check error: {e}", exc_info=True)
+        return {
+            "error": str(e),
+            "message": "Failed to check configuration"
+        }
+
+@router.get("/quick-recommendations", response_model=Dict[str, Any])
+async def get_quick_recommendations(
+    city: str = "Los Angeles",
+    state: str = "CA",
+    zip_code: str = "90210",
+    skin_type: Optional[str] = None,
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Database = Depends(get_database)
+):
+    """Get quick product recommendations without new analysis"""
+    try:
+        logger.info(f"Quick recommendations requested for user {current_user.id}")
+        
+        user_location = {
+            "city": city,
+            "state": state,
+            "zip_code": zip_code
+        }
+        
+        recommendations = await recommendation_service.get_quick_recommendations(
+            user=current_user,
+            user_location=user_location,
+            db=db,
+            skin_type_override=skin_type
+        )
+        
+        logger.info(f"Quick recommendations generated: {len(recommendations.get('recommendations', []))} products")
+        return recommendations
+        
+    except Exception as e:
+        logger.error(f"Quick recommendations endpoint error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate recommendations: {str(e)}"
+        )
+
 @router.get("/", response_model=List[SkinAnalysisResponse])
 async def get_user_analyses(
     skip: int = 0,
@@ -523,68 +585,6 @@ async def complete_ai_pipeline(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to complete AI pipeline: {str(e)}"
-        )
-
-@router.get("/config-check")
-async def check_configuration(
-    current_user: UserModel = Depends(get_current_active_user),
-):
-    """Check API configuration status (for debugging)"""
-    try:
-        from app.core.config import settings
-        
-        perplexity_key = settings.PERPLEXITY_API_KEY
-        openai_key = settings.OPENAI_API_KEY
-        
-        return {
-            "perplexity_configured": bool(perplexity_key),
-            "openai_configured": bool(openai_key),
-            "orbo_configured": bool(settings.ORBO_API_KEY or settings.ORBO_AI_API_KEY),
-            "aws_configured": bool(settings.AWS_ACCESS_KEY_ID),
-            "perplexity_key_prefix": perplexity_key[:10] + "..." if perplexity_key else "NOT SET",
-            "openai_key_prefix": openai_key[:10] + "..." if openai_key else "NOT SET"
-        }
-    except Exception as e:
-        logger.error(f"Config check error: {e}", exc_info=True)
-        return {
-            "error": str(e),
-            "message": "Failed to check configuration"
-        }
-
-@router.get("/quick-recommendations", response_model=Dict[str, Any])
-async def get_quick_recommendations(
-    city: str = "Los Angeles",
-    state: str = "CA",
-    zip_code: str = "90210",
-    skin_type: Optional[str] = None,
-    current_user: UserModel = Depends(get_current_active_user),
-    db: Database = Depends(get_database)
-):
-    """Get quick product recommendations without new analysis"""
-    try:
-        logger.info(f"Quick recommendations requested for user {current_user.id}")
-        
-        user_location = {
-            "city": city,
-            "state": state,
-            "zip_code": zip_code
-        }
-        
-        recommendations = await recommendation_service.get_quick_recommendations(
-            user=current_user,
-            user_location=user_location,
-            db=db,
-            skin_type_override=skin_type
-        )
-        
-        logger.info(f"Quick recommendations generated: {len(recommendations.get('recommendations', []))} products")
-        return recommendations
-        
-    except Exception as e:
-        logger.error(f"Quick recommendations endpoint error: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to generate recommendations: {str(e)}"
         )
 
 @router.post("/product-compatibility", response_model=Dict[str, Any])
