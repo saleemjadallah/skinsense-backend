@@ -249,7 +249,9 @@ class PerplexityRecommendationService:
                     await asyncio.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
             except httpx.HTTPStatusError as e:
+                error_detail = e.response.text if hasattr(e.response, 'text') else str(e)
                 logger.error(f"Perplexity API HTTP error (attempt {attempt + 1}/{max_retries}): {e.response.status_code}")
+                logger.error(f"Perplexity error response: {error_detail}")
                 if e.response.status_code in [429, 503] and attempt < max_retries - 1:
                     # Rate limit or service unavailable - retry
                     await asyncio.sleep(retry_delay)
