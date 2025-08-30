@@ -40,6 +40,12 @@ class PerplexityRecommendationService:
         self.api_key = settings.PERPLEXITY_API_KEY
         self.base_url = "https://api.perplexity.ai/chat/completions"
         
+        # Log API key status
+        if self.api_key:
+            logger.info(f"Perplexity API key configured: {self.api_key[:10]}...")
+        else:
+            logger.warning("Perplexity API key not configured!")
+        
         # Cache settings
         self.cache_ttl_hours = 24
         self.max_cached_products_per_user = 50
@@ -60,6 +66,10 @@ class PerplexityRecommendationService:
         """
         Generate personalized product recommendations using Perplexity + smart caching
         """
+        logger.info(f"Getting personalized recommendations for user {user.id}")
+        logger.info(f"User location: {user_location}")
+        logger.info(f"Skin analysis keys: {skin_analysis.keys() if skin_analysis else 'None'}")
+        
         try:
             # Initialize affiliate service
             affiliate_service = get_affiliate_service(db)
@@ -147,7 +157,7 @@ class PerplexityRecommendationService:
             }
             
         except Exception as e:
-            logger.error(f"Recommendation generation failed: {e}")
+            logger.error(f"Recommendation generation failed: {e}", exc_info=True)
             # Return error instead of fallback
             return {
                 "recommendations": [],

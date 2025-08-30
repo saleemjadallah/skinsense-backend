@@ -535,21 +535,31 @@ async def get_quick_recommendations(
     db: Database = Depends(get_database)
 ):
     """Get quick product recommendations without new analysis"""
-    
-    user_location = {
-        "city": city,
-        "state": state,
-        "zip_code": zip_code
-    }
-    
-    recommendations = await recommendation_service.get_quick_recommendations(
-        user=current_user,
-        user_location=user_location,
-        db=db,
-        skin_type_override=skin_type
-    )
-    
-    return recommendations
+    try:
+        logger.info(f"Quick recommendations requested for user {current_user.id}")
+        
+        user_location = {
+            "city": city,
+            "state": state,
+            "zip_code": zip_code
+        }
+        
+        recommendations = await recommendation_service.get_quick_recommendations(
+            user=current_user,
+            user_location=user_location,
+            db=db,
+            skin_type_override=skin_type
+        )
+        
+        logger.info(f"Quick recommendations generated: {len(recommendations.get('recommendations', []))} products")
+        return recommendations
+        
+    except Exception as e:
+        logger.error(f"Quick recommendations endpoint error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to generate recommendations: {str(e)}"
+        )
 
 @router.post("/product-compatibility", response_model=Dict[str, Any])
 async def check_product_compatibility(
