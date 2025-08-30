@@ -202,7 +202,7 @@ class PerplexityRecommendationService:
                         "Content-Type": "application/json"
                     },
                     json={
-                        "model": "sonar-small-online",  # Using valid Perplexity model for real-time product search
+                        "model": "sonar",  # Using Perplexity's lightweight search model
                         "messages": [
                             {
                                 "role": "system",
