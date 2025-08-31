@@ -138,11 +138,19 @@ class RoutineService:
                 analysis_data
             )
             
+            # Prepare document for insertion - exclude None _id
+            routine_doc = routine.dict(by_alias=True)
+            # Remove _id if it's None to let MongoDB generate it
+            if routine_doc.get("_id") is None:
+                routine_doc.pop("_id", None)
+            
             # Save to database
-            result = self.db.routines.insert_one(routine.dict(by_alias=True))
+            result = self.db.routines.insert_one(routine_doc)
             routine.id = result.inserted_id
             
-            return [routine.dict()]
+            # Return with the generated ID
+            routine_doc["_id"] = str(result.inserted_id)
+            return [routine_doc]
             
         except Exception as e:
             logger.error(f"Error generating AI routine: {str(e)}")
