@@ -481,15 +481,24 @@ FORMAT REQUIREMENTS:
             content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
             citations = response.get("citations", [])
             
+            # Log the raw content for debugging
+            logger.info(f"[PERPLEXITY DEBUG] Raw content first 500 chars: {content[:500]}")
+            
             # Extract structured sections from the response
             recommendations = self._extract_structured_products(
                 content, skin_analysis, user_location, citations
             )
             
+            logger.info(f"[PERPLEXITY DEBUG] Extracted {len(recommendations)} products")
+            if recommendations:
+                logger.info(f"[PERPLEXITY DEBUG] First product: {json.dumps(recommendations[0], default=str)[:300]}")
+            
             return recommendations
             
         except Exception as e:
             logger.error(f"Failed to parse Perplexity response: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return []
     
     def _extract_structured_products(
@@ -680,6 +689,16 @@ FORMAT REQUIREMENTS:
         """
         products = []
         
+        logger.info(f"[PERPLEXITY DEBUG] Starting simple extraction, content has pipes: {'|' in content}, has asterisks: {'**' in content}")
+        
+        # First, try to parse if content has pipe separators (common format)
+        if '|' in content:
+            logger.info("[PERPLEXITY DEBUG] Attempting pipe-separated format parsing")
+            products = self._parse_pipe_separated_format(content, skin_analysis)
+            if products:
+                logger.info(f"[PERPLEXITY DEBUG] Successfully parsed {len(products)} products from pipe format")
+                return products
+        
         # Simple pattern matching to find product mentions
         lines = content.split('\n')
         current_product = {}
@@ -695,8 +714,20 @@ FORMAT REQUIREMENTS:
                     products.append(self._format_product_recommendation(current_product, skin_analysis))
                     current_product = {}
                 
+                # Clean up the name if it contains markdown or pipes
+                clean_name = line.replace('**', '').replace('*', '').strip()
+                if '|' in clean_name:
+                    # Split by pipe and take the first meaningful part
+                    parts = [p.strip() for p in clean_name.split('|') if p.strip()]
+                    if parts:
+                        # If first part is just a category, use the second part as name
+                        if len(parts) > 1 and any(cat in parts[0].lower() for cat in ['cleanser', 'moisturizer', 'serum', 'sunscreen', 'treatment']):
+                            clean_name = parts[1]
+                        else:
+                            clean_name = parts[0]
+                
                 current_product['raw_text'] = line
-                current_product['name'] = line
+                current_product['name'] = clean_name
             
             elif '$' in line:
                 current_product['price_info'] = line
@@ -710,6 +741,78 @@ FORMAT REQUIREMENTS:
         if current_product:
             products.append(self._format_product_recommendation(current_product, skin_analysis))
         
+        logger.info(f"[PERPLEXITY DEBUG] Simple extraction found {len(products)} products")
+        return products
+    
+    def _parse_pipe_separated_format(self, content: str, skin_analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Parse content that appears to be in pipe-separated format
+        Example: **Evening Cleanser** | CeraVe Foaming Face Wash | Niacinamide, Ceramides | ...
+        """
+        products = []
+        
+        # Split by newlines to get individual product lines
+        lines = content.split('\n')
+        
+        for line in lines:
+            if not line.strip() or not '|' in line:
+                continue
+            
+            # Remove markdown formatting
+            line = line.replace('**', '').strip()
+            
+            # Split by pipe separator
+            parts = [p.strip() for p in line.split('|') if p.strip()]
+            
+            if len(parts) >= 3 and any(brand in ' '.join(parts).lower() for brand in ['cerave', 'neutrogena', 'olay', 'the ordinary', 'paula', 'la roche', 'cetaphil', 'aveeno']):
+                product = {}
+                
+                # Parse different parts based on position
+                if parts[0]:  # Category or type (e.g., "Evening Cleanser")
+                    product['category'] = parts[0]
+                
+                if len(parts) > 1:  # Product name and brand
+                    product['name'] = parts[1]
+                    product['brand'] = self._extract_brand(parts[1])
+                
+                if len(parts) > 2:  # Key ingredients
+                    product['key_ingredients'] = [ing.strip() for ing in parts[2].split(',')]
+                
+                if len(parts) > 3:  # Description/benefits
+                    product['description'] = parts[3]
+                    product['match_reasoning'] = parts[3]
+                
+                if len(parts) > 4:  # Timeline
+                    product['expected_results'] = parts[4]
+                
+                if len(parts) > 5:  # Where to buy
+                    stores_text = parts[5]
+                    product['availability'] = {
+                        'local_stores': self._extract_stores_from_text(stores_text, local=True),
+                        'online_stores': self._extract_stores_from_text(stores_text, local=False)
+                    }
+                    # Also try to extract affiliate links
+                    if 'amazon' in stores_text.lower():
+                        product['affiliate_link'] = 'https://www.amazon.com/s?k=' + product.get('name', '').replace(' ', '+')
+                    elif 'sephora' in stores_text.lower():
+                        product['affiliate_link'] = 'https://www.sephora.com/search?keyword=' + product.get('name', '').replace(' ', '+')
+                    elif 'target' in stores_text.lower():
+                        product['affiliate_link'] = 'https://www.target.com/s?searchTerm=' + product.get('name', '').replace(' ', '+')
+                
+                if len(parts) > 6:  # Price
+                    product['price_range'] = self._extract_price_range(parts[6])
+                
+                if len(parts) > 7:  # Usage instructions
+                    product['usage_instructions'] = parts[7]
+                
+                # Add metadata
+                product['id'] = f"perplexity_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{hash(product.get('name', '')) % 10000}"
+                product['compatibility_score'] = self._estimate_compatibility_score(product, skin_analysis)
+                product['source'] = 'perplexity_search'
+                product['search_timestamp'] = datetime.now(timezone.utc).isoformat()
+                
+                products.append(product)
+        
         return products
     
     def _format_product_recommendation(
@@ -720,20 +823,27 @@ FORMAT REQUIREMENTS:
         """
         Format parsed product into standardized recommendation structure
         """
+        # If the product already has properly parsed fields, return it mostly as-is
+        if 'category' in raw_product and 'brand' in raw_product:
+            return raw_product
+        
+        # Otherwise, do the standard formatting
         return {
             "id": f"perplexity_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{hash(raw_product.get('name', '')) % 10000}",
             "name": raw_product.get('name', 'Product Name'),
-            "brand": self._extract_brand(raw_product.get('name', '')),
-            "category": self._guess_category(raw_product.get('name', '')),
-            "price_range": self._extract_price_range(raw_product.get('price_info', '$15-25')),
-            "availability": {
+            "brand": raw_product.get('brand') or self._extract_brand(raw_product.get('name', '')),
+            "category": raw_product.get('category') or self._guess_category(raw_product.get('name', '')),
+            "description": raw_product.get('description'),
+            "price_range": raw_product.get('price_range') or self._extract_price_range(raw_product.get('price_info', '$15-25')),
+            "availability": raw_product.get('availability') or {
                 "local_stores": self._extract_local_stores(raw_product.get('availability', [])),
                 "online_stores": self._extract_online_stores(raw_product.get('availability', []))
             },
-            "match_reasoning": self._generate_match_reasoning(raw_product, skin_analysis),
-            "compatibility_score": self._estimate_compatibility_score(raw_product, skin_analysis),
-            "usage_instructions": self._generate_usage_instructions(raw_product),
-            "key_ingredients": self._extract_key_ingredients(raw_product),
+            "match_reasoning": raw_product.get('match_reasoning') or self._generate_match_reasoning(raw_product, skin_analysis),
+            "compatibility_score": raw_product.get('compatibility_score') or self._estimate_compatibility_score(raw_product, skin_analysis),
+            "usage_instructions": raw_product.get('usage_instructions') or self._generate_usage_instructions(raw_product),
+            "key_ingredients": raw_product.get('key_ingredients') or self._extract_key_ingredients(raw_product),
+            "affiliate_link": raw_product.get('affiliate_link'),
             "source": "perplexity_search",
             "search_timestamp": datetime.now(timezone.utc).isoformat(),
             "raw_data": raw_product
