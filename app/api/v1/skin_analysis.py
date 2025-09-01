@@ -219,6 +219,21 @@ async def process_skin_analysis(
             {"$set": update_data}
         )
         
+        # Track achievement for completed analysis
+        from .achievement_integration import track_skin_analysis_completion
+        
+        # Get the overall skin score from ORBO response
+        skin_score = orbo_analysis.get("overall_skin_health_score", 0) if orbo_analysis else None
+        
+        # Track the achievement
+        track_skin_analysis_completion(
+            user_id=str(user_data["id"]),
+            analysis_id=str(analysis_id),
+            skin_score=skin_score
+        )
+        
+        logger.info(f"Tracked achievement for analysis {analysis_id}, user {user_data['id']}, score: {skin_score}")
+        
         # TODO: Send push notification about completed analysis
         
     except Exception as e:
@@ -579,6 +594,21 @@ async def complete_ai_pipeline(
             }}
         )
         
+        # Track achievement for completed analysis
+        from .achievement_integration import track_skin_analysis_completion
+        
+        # Get the overall skin score from the results
+        skin_score = complete_results.get("skin_analysis", {}).get("overall_skin_health_score", 0)
+        
+        # Track the achievement
+        track_skin_analysis_completion(
+            user_id=str(current_user.id),
+            analysis_id=str(analysis_id),
+            skin_score=skin_score
+        )
+        
+        logger.info(f"Tracked achievement for complete-pipeline analysis {analysis_id}, user {current_user.id}, score: {skin_score}")
+        
         return complete_results
         
     except Exception as e:
@@ -911,6 +941,18 @@ async def save_orbo_sdk_result(
             "status": "completed",
             "processing_complete": True,
         }
+        
+        # Track achievement for completed analysis
+        from .achievement_integration import track_skin_analysis_completion
+        
+        # Track the achievement
+        track_skin_analysis_completion(
+            user_id=str(current_user.id),
+            analysis_id=analysis_id,
+            skin_score=orbo_metrics.overall_skin_health_score
+        )
+        
+        logger.info(f"Tracked achievement for ORBO SDK analysis {analysis_id}, user {current_user.id}, score: {orbo_metrics.overall_skin_health_score}")
         logger.info(f"AI pipeline completed for analysis {analysis_id}")
         return complete_response
         
@@ -1044,6 +1086,21 @@ async def run_ai_for_analysis(
         product_list = recs.get("recommendations", [])
     
     logger.info(f"Returning {len(product_list)} product recommendations to frontend")
+    
+    # Track achievement for completed analysis (if not already tracked)
+    from .achievement_integration import track_skin_analysis_completion
+    
+    # Get the overall skin score from the ORBO response
+    skin_score = orbo_response.get("overall_skin_health_score", 0)
+    
+    # Track the achievement
+    track_skin_analysis_completion(
+        user_id=str(current_user.id),
+        analysis_id=analysis_id,
+        skin_score=skin_score
+    )
+    
+    logger.info(f"Tracked achievement for run-ai analysis {analysis_id}, user {current_user.id}, score: {skin_score}")
     
     return {
         "analysis_id": analysis_id,
