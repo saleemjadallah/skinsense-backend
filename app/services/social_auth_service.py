@@ -23,7 +23,12 @@ class SocialAuthService:
             # settings.google_oauth_client_id_ios,
             # settings.google_oauth_client_id_web,
         ]
-        self.apple_client_id = "app.skinsense.ios"  # Your Apple app bundle ID
+        # Accept both the iOS app bundle ID and the Service ID for web/backend
+        self.apple_client_ids = [
+            "app.skinsense.ios",  # iOS app bundle ID
+            "app.skinsense.service",  # Service ID for backend (create this in Apple Developer)
+            "app.skinsense.ios.service"  # Alternative service ID format
+        ]
     
     async def verify_google_token(self, id_token: str) -> Optional[Dict[str, Any]]:
         """
@@ -111,29 +116,42 @@ class SocialAuthService:
                 logger.error(f"No matching public key found for Apple token with kid: {kid}")
                 return None
             
-            # Verify and decode the token
-            try:
-                decoded = jwt.decode(
-                    identity_token,
-                    public_key,
-                    algorithms=["RS256"],
-                    audience=self.apple_client_id,
-                    issuer="https://appleid.apple.com"
-                )
-                logger.info(f"Token decoded successfully. Sub: {decoded.get('sub')}")
-                logger.info(f"Token audience: {decoded.get('aud')}")
-                logger.info(f"Token issuer: {decoded.get('iss')}")
-            except jwt.InvalidAudienceError as e:
-                logger.error(f"Invalid audience. Expected: {self.apple_client_id}, Error: {e}")
-                return None
-            except jwt.InvalidIssuerError as e:
-                logger.error(f"Invalid issuer. Expected: https://appleid.apple.com, Error: {e}")
-                return None
-            except jwt.ExpiredSignatureError as e:
-                logger.error(f"Token has expired: {e}")
-                return None
-            except jwt.InvalidTokenError as e:
-                logger.error(f"Invalid Apple token: {e}")
+            # Verify and decode the token - try each accepted client ID
+            decoded = None
+            last_error = None
+            
+            for client_id in self.apple_client_ids:
+                try:
+                    decoded = jwt.decode(
+                        identity_token,
+                        public_key,
+                        algorithms=["RS256"],
+                        audience=client_id,
+                        issuer="https://appleid.apple.com"
+                    )
+                    logger.info(f"Token decoded successfully with client_id: {client_id}")
+                    logger.info(f"Token sub: {decoded.get('sub')}")
+                    logger.info(f"Token audience: {decoded.get('aud')}")
+                    logger.info(f"Token issuer: {decoded.get('iss')}")
+                    break  # Successfully decoded
+                except jwt.InvalidAudienceError:
+                    logger.debug(f"Token audience doesn't match {client_id}, trying next...")
+                    continue
+                except jwt.InvalidIssuerError as e:
+                    last_error = f"Invalid issuer: {e}"
+                    break
+                except jwt.ExpiredSignatureError as e:
+                    last_error = f"Token expired: {e}"
+                    break
+                except jwt.InvalidTokenError as e:
+                    last_error = f"Invalid token: {e}"
+                    break
+            
+            if not decoded:
+                if last_error:
+                    logger.error(f"Token verification failed: {last_error}")
+                else:
+                    logger.error(f"Invalid audience. Token audience not in: {self.apple_client_ids}")
                 return None
             
             # Verify the user identifier matches
