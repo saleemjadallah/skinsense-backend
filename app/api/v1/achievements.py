@@ -36,6 +36,11 @@ async def get_user_achievements(
         
         achievements = achievement_service.get_user_achievements(str(current_user.id))
         
+        # Log First Glow status for debugging
+        first_glow = next((a for a in achievements if a.get("achievement_id") == "first_glow"), None)
+        if first_glow:
+            logger.info(f"First Glow for user {current_user.id}: unlocked={first_glow.get('is_unlocked')}, progress={first_glow.get('progress')}")
+        
         # Filter by category if requested
         if category:
             achievements = [a for a in achievements if a.get("category") == category]
@@ -44,10 +49,13 @@ async def get_user_achievements(
         if unlocked_only:
             achievements = [a for a in achievements if a.get("is_unlocked", False)]
         
+        unlocked_count = len([a for a in achievements if a.get("is_unlocked", False)])
+        logger.info(f"Returning {len(achievements)} achievements ({unlocked_count} unlocked) for user {current_user.id}")
+        
         return {
             "achievements": achievements,
             "total": len(achievements),
-            "unlocked": len([a for a in achievements if a.get("is_unlocked", False)])
+            "unlocked": unlocked_count
         }
     except Exception as e:
         logger.error(f"Error getting achievements for user {current_user.id}: {str(e)}")
