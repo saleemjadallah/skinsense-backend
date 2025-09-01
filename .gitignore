@@ -90,6 +90,11 @@ firebase-service-account.json
 # Test files with hardcoded values
 fix_hardcoded_secrets.py
 
+# Debug scripts (may contain sensitive data)
+debug_*.py
+test_*_api.py
+*_debug.py
+
 # Backup files
 *.bak
 *.backup
