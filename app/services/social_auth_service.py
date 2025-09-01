@@ -28,6 +28,7 @@ class SocialAuthService:
         # Your Bundle ID from Xcode is app.skinsense.ios
         self.apple_client_ids = [
             "app.skinsense.ios",  # iOS app bundle ID from Xcode
+            "8U858GM5RH.app.skinsense.ios",  # Bundle ID with Team ID prefix
             # The actual audience will be logged when you sign in
             # We'll add it here once we know what it is
         ]
