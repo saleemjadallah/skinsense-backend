@@ -364,11 +364,6 @@ async def apple_sign_in(
     logger = logging.getLogger(__name__)
     
     try:
-        # Log the incoming request
-        logger.info(f"Apple Sign In request received for user_identifier: {request.user_identifier}")
-        logger.info(f"Email provided: {request.email}")
-        logger.info(f"Full name provided: {request.full_name}")
-        
         # Verify Apple token
         apple_user = await social_auth_service.verify_apple_token(
             request.identity_token,
@@ -378,13 +373,10 @@ async def apple_sign_in(
         )
         
         if not apple_user:
-            logger.error("Apple token verification failed - returned None")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid Apple token"
             )
-            
-        logger.info(f"Apple token verified successfully for user: {apple_user.get('email', request.user_identifier)}")
         
     except HTTPException:
         raise  # Re-raise HTTP exceptions
@@ -455,7 +447,6 @@ async def apple_sign_in(
                         username = f"{base_username}_{secrets.token_hex(4)}"
                         break
                 
-                logger.info(f"Creating new user with username: {username}")
                 
                 # Create new user
                 new_user = UserModel(
@@ -485,8 +476,6 @@ async def apple_sign_in(
             username = f"user_{secrets.token_hex(4)}"
             while db.users.find_one({"username": username}):
                 username = f"user_{secrets.token_hex(4)}"
-            
-            logger.info(f"Creating new user without email with username: {username}")
             
             new_user = UserModel(
                 email=f"{apple_user['provider_user_id']}@privaterelay.appleid.com",
