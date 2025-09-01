@@ -36,9 +36,10 @@ log "Cleaning up Docker resources..."
 docker container prune -f >/dev/null 2>&1 || true
 docker image prune -f >/dev/null 2>&1 || true
 
-# Build and start fresh
-log "Building and starting containers..."
-docker-compose -f docker-compose.yml up --build -d
+# Build and start fresh (force rebuild without cache)
+log "Building and starting containers (no cache)..."
+docker-compose -f docker-compose.yml build --no-cache
+docker-compose -f docker-compose.yml up -d
 
 # Wait for containers to be ready
 log "Waiting for services to start..."
