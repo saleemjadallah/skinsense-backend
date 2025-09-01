@@ -436,13 +436,26 @@ async def apple_sign_in(
                 # Create new user
                 is_new_user = True
                 
-                # Generate username (duplicates allowed)
+                # Generate unique username
+                base_username = ""
                 if apple_user.get("name"):
-                    username = apple_user["name"].lower().replace(" ", "_")
+                    base_username = apple_user["name"].lower().replace(" ", "_")
                 elif apple_user.get("email"):
-                    username = apple_user["email"].split("@")[0]
+                    base_username = apple_user["email"].split("@")[0]
                 else:
-                    username = f"user_{secrets.token_hex(4)}"
+                    base_username = f"user_{secrets.token_hex(4)}"
+                
+                # Ensure username is unique
+                username = base_username
+                counter = 1
+                while db.users.find_one({"username": username}):
+                    username = f"{base_username}_{counter}"
+                    counter += 1
+                    if counter > 100:  # Safety limit
+                        username = f"{base_username}_{secrets.token_hex(4)}"
+                        break
+                
+                logger.info(f"Creating new user with username: {username}")
                 
                 # Create new user
                 new_user = UserModel(
@@ -468,7 +481,12 @@ async def apple_sign_in(
             # No email and no existing user - create new user with Apple ID only
             is_new_user = True
             
+            # Generate unique username
             username = f"user_{secrets.token_hex(4)}"
+            while db.users.find_one({"username": username}):
+                username = f"user_{secrets.token_hex(4)}"
+            
+            logger.info(f"Creating new user without email with username: {username}")
             
             new_user = UserModel(
                 email=f"{apple_user['provider_user_id']}@privaterelay.appleid.com",
