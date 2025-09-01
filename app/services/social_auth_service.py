@@ -81,27 +81,34 @@ class SocialAuthService:
             None if verification fails
         """
         try:
+            logger.info(f"Verifying Apple token for user_identifier: {user_identifier}")
+            logger.info(f"Email provided: {email}")
+            logger.info(f"Full name provided: {full_name}")
+            
             # Fetch Apple's public keys
             keys_response = await self.client.get("https://appleid.apple.com/auth/keys")
             if keys_response.status_code != 200:
-                logger.error("Failed to fetch Apple public keys")
+                logger.error(f"Failed to fetch Apple public keys. Status: {keys_response.status_code}")
                 return None
             
             apple_keys = keys_response.json()["keys"]
+            logger.info(f"Fetched {len(apple_keys)} Apple public keys")
             
             # Decode the token header to get the key ID
             header = jwt.get_unverified_header(identity_token)
             kid = header.get("kid")
+            logger.info(f"Token kid: {kid}")
             
             # Find the matching public key
             public_key = None
             for key in apple_keys:
                 if key["kid"] == kid:
                     public_key = jwt.algorithms.RSAAlgorithm.from_jwk(json.dumps(key))
+                    logger.info(f"Found matching public key for kid: {kid}")
                     break
             
             if not public_key:
-                logger.error("No matching public key found for Apple token")
+                logger.error(f"No matching public key found for Apple token with kid: {kid}")
                 return None
             
             # Verify and decode the token
@@ -113,13 +120,25 @@ class SocialAuthService:
                     audience=self.apple_client_id,
                     issuer="https://appleid.apple.com"
                 )
+                logger.info(f"Token decoded successfully. Sub: {decoded.get('sub')}")
+                logger.info(f"Token audience: {decoded.get('aud')}")
+                logger.info(f"Token issuer: {decoded.get('iss')}")
+            except jwt.InvalidAudienceError as e:
+                logger.error(f"Invalid audience. Expected: {self.apple_client_id}, Error: {e}")
+                return None
+            except jwt.InvalidIssuerError as e:
+                logger.error(f"Invalid issuer. Expected: https://appleid.apple.com, Error: {e}")
+                return None
+            except jwt.ExpiredSignatureError as e:
+                logger.error(f"Token has expired: {e}")
+                return None
             except jwt.InvalidTokenError as e:
                 logger.error(f"Invalid Apple token: {e}")
                 return None
             
             # Verify the user identifier matches
             if decoded.get("sub") != user_identifier:
-                logger.error("User identifier mismatch")
+                logger.error(f"User identifier mismatch. Expected: {user_identifier}, Got: {decoded.get('sub')}")
                 return None
             
             # Build user info
@@ -140,10 +159,11 @@ class SocialAuthService:
                 if name_parts:
                     user_info["name"] = " ".join(name_parts)
             
+            logger.info(f"Apple token verified successfully for user: {user_info.get('email', user_identifier)}")
             return user_info
             
         except Exception as e:
-            logger.error(f"Error verifying Apple token: {e}")
+            logger.error(f"Unexpected error verifying Apple token: {e}", exc_info=True)
             return None
     
     async def close(self):
