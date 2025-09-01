@@ -23,11 +23,14 @@ class SocialAuthService:
             # settings.google_oauth_client_id_ios,
             # settings.google_oauth_client_id_web,
         ]
-        # Accept both the iOS app bundle ID and the Service ID for web/backend
+        # Accept both the iOS app bundle ID and various Service ID formats
         self.apple_client_ids = [
             "app.skinsense.ios",  # iOS app bundle ID
-            "app.skinsense.service",  # Service ID for backend (create this in Apple Developer)
-            "app.skinsense.ios.service"  # Alternative service ID format
+            "com.skinsense.service",  # Service ID format 1
+            "com.skinsense.api",  # Service ID format 2
+            "com.skinsense.backend",  # Service ID format 3
+            "app.skinsense.service",  # Service ID format 4
+            "app.skinsense.ios.service"  # Service ID format 5
         ]
     
     async def verify_google_token(self, id_token: str) -> Optional[Dict[str, Any]]:
