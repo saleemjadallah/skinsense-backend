@@ -24,8 +24,10 @@ class SocialAuthService:
             # settings.google_oauth_client_id_web,
         ]
         # Accept both the iOS app bundle ID and various Service ID formats
+        # Including Team ID prefix format (8U858GM5RH is your Team ID)
         self.apple_client_ids = [
             "app.skinsense.ios",  # iOS app bundle ID
+            "8U858GM5RH.app.skinsense.ios",  # Bundle ID with Team ID prefix
             "com.skinsense.service",  # Service ID format 1
             "com.skinsense.api",  # Service ID format 2
             "com.skinsense.backend",  # Service ID format 3
