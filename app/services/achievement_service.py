@@ -178,12 +178,25 @@ class AchievementService:
         
         # Check which achievements this action affects
         if action.action_type == "skin_analysis_completed":
-            # First analysis achievement
-            analysis_count = self.achievement_actions_collection.count_documents({
-                "user_id": user_id,
-                "action_type": "skin_analysis_completed"
+            # Count actual analyses from the skin_analyses collection
+            # This ensures we count ALL analyses, not just ones tracked after achievements were added
+            from ..database import get_database
+            db = get_database()
+            from bson import ObjectId
+            
+            # Convert user_id to ObjectId if it's a string
+            try:
+                user_obj_id = ObjectId(user_id)
+            except:
+                user_obj_id = user_id
+                
+            analysis_count = db.skin_analyses.count_documents({
+                "user_id": user_obj_id
             })
             
+            logger.info(f"User {user_id} has {analysis_count} total analyses")
+            
+            # First analysis achievement
             if analysis_count == 1:
                 achievement = self.update_achievement_progress(user_id, "first_glow", 1.0)
                 if achievement:
@@ -516,4 +529,77 @@ class AchievementService:
             "user_id": user_id,
             "verified_count": verified_count,
             "verified_at": datetime.now()
+        }
+    
+    def sync_achievements_from_existing_data(self, user_id: str) -> Dict[str, Any]:
+        """Sync achievements based on existing user data (analyses, routines, etc.)"""
+        from ..database import get_database
+        from bson import ObjectId
+        
+        db = get_database()
+        updated_achievements = []
+        
+        # Convert user_id to ObjectId if it's a string
+        try:
+            user_obj_id = ObjectId(user_id)
+        except:
+            user_obj_id = user_id
+        
+        # Check skin analyses for First Glow and Progress Pioneer
+        analysis_count = db.skin_analyses.count_documents({"user_id": user_obj_id})
+        
+        if analysis_count > 0:
+            # First Glow achievement
+            achievement = self.update_achievement_progress(
+                user_id, "first_glow", 1.0,
+                {"analysis_count": analysis_count}
+            )
+            if achievement:
+                updated_achievements.append(achievement)
+                logger.info(f"Synced First Glow achievement for user {user_id}")
+        
+        # Progress Pioneer (10 photos)
+        if analysis_count > 0:
+            progress = min(1.0, analysis_count / 10.0)
+            achievement = self.update_achievement_progress(
+                user_id, "progress_pioneer", progress,
+                {"photo_count": analysis_count}
+            )
+            if achievement:
+                updated_achievements.append(achievement)
+                logger.info(f"Synced Progress Pioneer achievement for user {user_id}: {analysis_count} photos")
+        
+        # Check for goals (Baseline Boss)
+        goal_count = db.goals.count_documents({"user_id": user_obj_id})
+        if goal_count > 0:
+            achievement = self.update_achievement_progress(
+                user_id, "baseline_boss", 1.0,
+                {"goal_count": goal_count}
+            )
+            if achievement:
+                updated_achievements.append(achievement)
+                logger.info(f"Synced Baseline Boss achievement for user {user_id}")
+        
+        # Check for routines (Routine Revolutionary)
+        routines = list(db.routines.find({"user_id": user_obj_id}))
+        has_morning = any(r.get("type") == "morning" for r in routines)
+        has_evening = any(r.get("type") == "evening" for r in routines)
+        
+        if has_morning and has_evening:
+            achievement = self.update_achievement_progress(
+                user_id, "routine_revolutionary", 1.0,
+                {"has_am_pm": True}
+            )
+            if achievement:
+                updated_achievements.append(achievement)
+                logger.info(f"Synced Routine Revolutionary achievement for user {user_id}")
+        
+        return {
+            "user_id": user_id,
+            "synced_achievements": len(updated_achievements),
+            "achievements": updated_achievements,
+            "analysis_count": analysis_count,
+            "goal_count": goal_count,
+            "routine_count": len(routines),
+            "synced_at": datetime.now()
         }

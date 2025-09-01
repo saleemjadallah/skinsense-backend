@@ -24,11 +24,17 @@ achievement_service = AchievementService()
 async def get_user_achievements(
     current_user: UserModel = Depends(get_current_user),
     category: Optional[AchievementCategory] = None,
-    unlocked_only: bool = False
+    unlocked_only: bool = False,
+    sync: bool = True  # Auto-sync by default
 ):
     """Get all achievements for the current user with their progress"""
     try:
-        achievements = achievement_service.get_user_achievements(current_user.id)
+        # Auto-sync achievements from existing data if requested
+        if sync:
+            sync_result = achievement_service.sync_achievements_from_existing_data(str(current_user.id))
+            logger.info(f"Auto-synced {sync_result['synced_achievements']} achievements for user {current_user.id}")
+        
+        achievements = achievement_service.get_user_achievements(str(current_user.id))
         
         # Filter by category if requested
         if category:
@@ -67,13 +73,26 @@ async def get_achievement_definitions(
     return definitions
 
 
+@router.post("/sync", response_model=Dict[str, Any])
+async def sync_user_achievements(
+    current_user: UserModel = Depends(get_current_user)
+):
+    """Manually sync achievements based on existing user data"""
+    try:
+        sync_result = achievement_service.sync_achievements_from_existing_data(str(current_user.id))
+        return sync_result
+    except Exception as e:
+        logger.error(f"Error syncing achievements for user {current_user.id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/stats", response_model=Dict[str, Any])
 async def get_achievement_stats(
     current_user: UserModel = Depends(get_current_user)
 ):
     """Get achievement statistics for the current user"""
     try:
-        stats = achievement_service.get_achievement_stats(current_user.id)
+        stats = achievement_service.get_achievement_stats(str(current_user.id))
         return stats
     except Exception as e:
         logger.error(f"Error getting achievement stats for user {current_user.id}: {str(e)}")
@@ -87,7 +106,7 @@ async def get_achievement_detail(
 ):
     """Get detailed information about a specific achievement"""
     try:
-        achievements = achievement_service.get_user_achievements(current_user.id)
+        achievements = achievement_service.get_user_achievements(str(current_user.id))
         achievement = next((a for a in achievements if a.get("achievement_id") == achievement_id), None)
         
         if not achievement:
