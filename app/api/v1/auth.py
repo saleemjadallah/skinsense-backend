@@ -360,18 +360,39 @@ async def apple_sign_in(
     # Import response models
     from app.schemas.user import OnboardingPreferencesResponse, SkinProfileResponse, ProductPreferencesResponse, SubscriptionInfoResponse, PrivacySettingsResponse
     
-    # Verify Apple token
-    apple_user = await social_auth_service.verify_apple_token(
-        request.identity_token,
-        request.user_identifier,
-        request.email,
-        request.full_name
-    )
+    import logging
+    logger = logging.getLogger(__name__)
     
-    if not apple_user:
+    try:
+        # Log the incoming request
+        logger.info(f"Apple Sign In request received for user_identifier: {request.user_identifier}")
+        logger.info(f"Email provided: {request.email}")
+        logger.info(f"Full name provided: {request.full_name}")
+        
+        # Verify Apple token
+        apple_user = await social_auth_service.verify_apple_token(
+            request.identity_token,
+            request.user_identifier,
+            request.email,
+            request.full_name
+        )
+        
+        if not apple_user:
+            logger.error("Apple token verification failed - returned None")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid Apple token"
+            )
+            
+        logger.info(f"Apple token verified successfully for user: {apple_user.get('email', request.user_identifier)}")
+        
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions
+    except Exception as e:
+        logger.error(f"Error during Apple Sign In: {str(e)}", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Apple token"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing Apple Sign In: {str(e)}"
         )
     
     # Check if user exists with this Apple ID

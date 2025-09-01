@@ -139,18 +139,26 @@ class SocialAuthService:
                     logger.info(f"Token audience: {decoded.get('aud')}")
                     logger.info(f"Token issuer: {decoded.get('iss')}")
                     break  # Successfully decoded
-                except jwt.InvalidAudienceError:
-                    logger.debug(f"Token audience doesn't match {client_id}, trying next...")
+                except jwt.InvalidAudienceError as e:
+                    logger.debug(f"Token audience doesn't match {client_id}, trying next... Error: {e}")
+                    last_error = f"Invalid audience for {client_id}: {e}"
                     continue
                 except jwt.InvalidIssuerError as e:
                     last_error = f"Invalid issuer: {e}"
-                    break
+                    logger.error(f"Issuer verification failed: {e}")
+                    continue  # Try next client_id instead of breaking
                 except jwt.ExpiredSignatureError as e:
                     last_error = f"Token expired: {e}"
-                    break
+                    logger.error(f"Token has expired: {e}")
+                    break  # No point trying other client IDs
                 except jwt.InvalidTokenError as e:
                     last_error = f"Invalid token: {e}"
-                    break
+                    logger.error(f"Token validation failed: {e}")
+                    continue  # Try next client_id
+                except Exception as e:
+                    last_error = f"Unexpected error: {e}"
+                    logger.error(f"Unexpected error decoding token with {client_id}: {e}")
+                    continue
             
             if not decoded:
                 if last_error:
