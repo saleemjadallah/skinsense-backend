@@ -161,6 +161,21 @@ class SocialAuthService:
                     continue
             
             if not decoded:
+                # Try to decode without audience verification to see what the actual audience is
+                try:
+                    debug_decoded = jwt.decode(
+                        identity_token,
+                        public_key,
+                        algorithms=["RS256"],
+                        options={"verify_aud": False},  # Skip audience verification for debugging
+                        issuer="https://appleid.apple.com"
+                    )
+                    actual_audience = debug_decoded.get("aud", "unknown")
+                    logger.error(f"Token has audience '{actual_audience}' which doesn't match any of: {self.apple_client_ids}")
+                    logger.info(f"Consider adding '{actual_audience}' to apple_client_ids in social_auth_service.py")
+                except Exception as debug_e:
+                    logger.error(f"Could not decode token even without audience check: {debug_e}")
+                
                 if last_error:
                     logger.error(f"Token verification failed: {last_error}")
                 else:
