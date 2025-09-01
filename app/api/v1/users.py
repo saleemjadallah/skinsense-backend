@@ -194,28 +194,34 @@ async def get_user_profile(
         is_verified=current_user.is_verified
     )
 
-@router.get("/me", response_model=UserResponse)
+@router.get("/me")
 async def get_current_user_profile(
     current_user: UserModel = Depends(get_current_active_user)
 ):
     """Get current user profile (alias for /profile)"""
     from app.schemas.user import OnboardingPreferencesResponse, SkinProfileResponse, ProductPreferencesResponse, SubscriptionInfoResponse, PrivacySettingsResponse
     
-    return UserResponse(
-        id=str(current_user.id),
-        email=current_user.email,
-        username=current_user.username,
-        name=getattr(current_user, 'name', None),
-        onboarding=OnboardingPreferencesResponse(**current_user.onboarding.dict()),
-        profile=SkinProfileResponse(**current_user.profile.dict()),
-        product_preferences=ProductPreferencesResponse(**current_user.product_preferences.dict()),
-        subscription=SubscriptionInfoResponse(**current_user.subscription.dict()),
-        privacy_settings=PrivacySettingsResponse(**current_user.privacy_settings.dict()),
-        created_at=current_user.created_at,
-        last_login=current_user.last_login,
-        is_active=current_user.is_active,
-        is_verified=current_user.is_verified
-    )
+    # Check if onboarding is completed
+    is_new_user = not current_user.onboarding.is_completed
+    
+    response_data = {
+        "id": str(current_user.id),
+        "email": current_user.email,
+        "username": current_user.username,
+        "name": getattr(current_user, 'name', None),
+        "onboarding": OnboardingPreferencesResponse(**current_user.onboarding.dict()).dict(),
+        "profile": SkinProfileResponse(**current_user.profile.dict()).dict(),
+        "product_preferences": ProductPreferencesResponse(**current_user.product_preferences.dict()).dict(),
+        "subscription": SubscriptionInfoResponse(**current_user.subscription.dict()).dict(),
+        "privacy_settings": PrivacySettingsResponse(**current_user.privacy_settings.dict()).dict(),
+        "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+        "last_login": current_user.last_login.isoformat() if current_user.last_login else None,
+        "is_active": current_user.is_active,
+        "is_verified": current_user.is_verified,
+        "isNewUser": is_new_user  # Add this flag for Flutter app
+    }
+    
+    return response_data
 
 @router.put("/me/onboarding", response_model=UserResponse)
 async def update_user_onboarding(
