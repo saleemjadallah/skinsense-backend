@@ -86,7 +86,7 @@ app.add_middleware(
 if not settings.DEBUG:
     app.add_middleware(
         TrustedHostMiddleware,
-        allowed_hosts=["api.skinsense.app", "*.skinsense.app", "api.skinsense.ai", "*.skinsense.ai", "56.228.12.81", "localhost"]
+        allowed_hosts=["api.skinsense.app", "*.skinsense.app", "api.skinsense.ai", "*.skinsense.ai", "54.172.133.142", "localhost"]
     )
 
 # Add middleware for tracking active users

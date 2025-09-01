@@ -411,9 +411,8 @@ class AffiliateService:
         self._store_tracking_data(
             tracking_id, user_id, product, skin_analysis_id, 'direct'
         )
-        # Use a hardcoded base URL for now - in production this should come from settings
-        base_url = "http://56.228.12.81:8080"
-        return f"{base_url}/api/v1/track/product/{tracking_id}"
+        # Use the configured base URL from settings
+        return f"{settings.BASE_URL}/api/v1/track/product/{tracking_id}"
     
     def _store_tracking_data(
         self,

@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "SkinSense AI API"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = True
+    BASE_URL: str = os.getenv("BASE_URL", "https://api.skinsense.app")
     
     # Security
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-here-change-in-production")
