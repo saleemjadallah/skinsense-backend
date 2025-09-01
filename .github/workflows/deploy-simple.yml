@@ -56,6 +56,13 @@ jobs:
         cp deploy-simple.sh deployment/deploy.sh
         chmod +x deployment/deploy.sh
         
+        # CRITICAL: Copy source code and Dockerfile for building
+        cp Dockerfile deployment/
+        cp requirements.txt deployment/
+        cp -r app deployment/
+        cp -r alembic deployment/ 2>/dev/null || true
+        cp alembic.ini deployment/ 2>/dev/null || true
+        
         # Create deployment archive
         tar -czf deployment.tar.gz -C deployment .
         echo "✅ Deployment package ready ($(du -h deployment.tar.gz | cut -f1))"
