@@ -715,6 +715,13 @@ IMPORTANT GUIDELINES:
             # Split by pipe separator
             parts = [p.strip() for p in line.split('|') if p.strip()]
             
+            # Skip header rows - check if first column contains generic header text
+            if len(parts) > 0:
+                first_col_lower = parts[0].lower()
+                if any(header in first_col_lower for header in ['product name', 'product', 'item', 'name']):
+                    logger.info(f"[PERPLEXITY DEBUG] Skipping header row: {parts[0]}")
+                    continue
+            
             # Expecting format: Product Name | Price | Description | Online Store Link | Store Availability
             if len(parts) >= 3:
                 product = {}
@@ -802,13 +809,17 @@ IMPORTANT GUIDELINES:
                 if len(parts) > 7:  # Usage instructions
                     product['usage_instructions'] = parts[7]
                 
-                # Add metadata
-                product['id'] = f"perplexity_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{hash(product.get('name', '')) % 10000}"
-                product['compatibility_score'] = self._estimate_compatibility_score(product, skin_analysis)
-                product['source'] = 'perplexity_search'
-                product['search_timestamp'] = datetime.now(timezone.utc).isoformat()
-                
-                products.append(product)
+                # Validate product has required fields before adding
+                if product.get('name') and not any(header in product['name'].lower() for header in ['product name', 'description', 'price', 'store']):
+                    # Add metadata
+                    product['id'] = f"perplexity_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{hash(product.get('name', '')) % 10000}"
+                    product['compatibility_score'] = self._estimate_compatibility_score(product, skin_analysis)
+                    product['source'] = 'perplexity_search'
+                    product['search_timestamp'] = datetime.now(timezone.utc).isoformat()
+                    
+                    products.append(product)
+                else:
+                    logger.info(f"[PERPLEXITY DEBUG] Skipping invalid product: {product.get('name', 'Unknown')}")
         
         return products
     
