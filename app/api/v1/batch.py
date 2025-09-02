@@ -10,7 +10,8 @@ from pymongo.database import Database
 from pymongo.errors import BulkWriteError
 import logging
 
-from app.core.dependencies import get_database, get_current_active_user
+from app.database import get_database
+from app.api.deps import get_current_active_user
 from app.models.user import UserModel
 from app.utils.datetime_utils import get_utc_now
 
