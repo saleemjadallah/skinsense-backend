@@ -727,7 +727,6 @@ IMPORTANT GUIDELINES:
                 if len(parts) > 1 and '$' in parts[1]:  # Price
                     product['price'] = parts[1]
                     # Extract numeric price
-                    import re
                     price_match = re.search(r'\$([\d.]+)', parts[1])
                     if price_match:
                         product['current_price'] = float(price_match.group(1))
