@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, UploadFile, File, Request
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, UploadFile, File, Request, Query
 from pymongo.database import Database
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
@@ -284,9 +284,9 @@ async def check_configuration(
 
 @router.get("/quick-recommendations", response_model=Dict[str, Any])
 async def get_quick_recommendations(
-    city: str = "Los Angeles",
-    state: str = "CA",
-    zip_code: str = "90210",
+    city: str = Query(..., description="User's city (required)"),
+    state: str = Query(..., description="User's state code (required)"),
+    zip_code: str = Query(..., description="User's ZIP code (required)"),
     skin_type: Optional[str] = None,
     current_user: UserModel = Depends(get_current_active_user),
     db: Database = Depends(get_database)
@@ -379,9 +379,9 @@ async def get_analysis_detail(
 @router.get("/{analysis_id}/recommendations", response_model=Dict[str, Any])
 async def get_analysis_recommendations(
     analysis_id: str,
-    city: str = "Los Angeles",
-    state: str = "CA", 
-    zip_code: str = "90210",
+    city: str = Query(..., description="User's city (required)"),
+    state: str = Query(..., description="User's state code (required)"), 
+    zip_code: str = Query(..., description="User's ZIP code (required)"),
     current_user: UserModel = Depends(get_current_active_user),
     db: Database = Depends(get_database)
 ):
@@ -405,12 +405,21 @@ async def get_analysis_recommendations(
             detail="Analysis not yet complete"
         )
     
+    # Validate location parameters
+    if not city or city == "Unknown" or not state or state == "Unknown":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Valid location parameters (city, state, zip_code) are required for personalized recommendations"
+        )
+    
     # Build user location
     user_location = {
         "city": city,
         "state": state,
         "zip_code": zip_code
     }
+    
+    logger.info(f"Getting recommendations for location: {city}, {state} {zip_code}")
     
     # Generate recommendations
     recommendations = await perplexity_service.get_personalized_recommendations(
@@ -500,9 +509,9 @@ async def track_product_interaction(
 async def complete_ai_pipeline(
     analysis_data: SkinAnalysisCreate,
     background_tasks: BackgroundTasks,
-    city: str = "Los Angeles",
-    state: str = "CA",
-    zip_code: str = "90210",
+    city: str = Query(..., description="User's city (required)"),
+    state: str = Query(..., description="User's state code (required)"),
+    zip_code: str = Query(..., description="User's ZIP code (required)"),
     current_user: UserModel = Depends(get_current_active_user),
     db: Database = Depends(get_database)
 ):

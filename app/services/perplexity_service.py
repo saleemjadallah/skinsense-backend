@@ -324,89 +324,59 @@ class PerplexityRecommendationService:
         local_climate = self._determine_climate(state)
         current_season = self._get_current_season()
         
-        query = f"""Based on the following comprehensive skin analysis results from ORBO AI, user profile, and location, provide personalized skincare product recommendations that are available for purchase in the user's area:
+        # Add more specific location context to the search
+        zip_code = user_location.get('zip_code', '')
+        
+        # Determine main skin concerns based on lowest scores
+        concerns_list = []
+        if hydration_score < 70:
+            concerns_list.append("dryness")
+        if acne_score < 70:
+            concerns_list.append("acne")
+        if dark_spots_score < 70:
+            concerns_list.append("hyperpigmentation")
+        if wrinkles_score < 70:
+            concerns_list.append("anti-aging")
+        if redness_score < 70:
+            concerns_list.append("sensitivity")
+        
+        if not concerns_list:
+            concerns_list = ["general skincare maintenance"]
+        
+        concerns_str = " and ".join(concerns_list[:2])  # Focus on top 2 concerns
+        
+        # Create a simple, focused query similar to the successful example
+        query = f"""List some {concerns_str} skincare products that can be purchased in {zip_code} area ({city}, {state}) with buy links, prices, description and online store availability in a table.
 
-**COMPLETE SKIN ANALYSIS DATA (10 ORBO METRICS):**
-1. Overall Skin Health Score: {overall_score}/100
-2. Hydration Level: {hydration_score}/100
-3. Smoothness (Texture Quality): {smoothness_score}/100
-4. Radiance (Natural Glow): {radiance_score}/100
-5. Dark Spots (Pigmentation): {dark_spots_score}/100 (Higher = fewer spots)
-6. Firmness (Elasticity): {firmness_score}/100
-7. Fine Lines & Wrinkles: {wrinkles_score}/100 (Higher = fewer wrinkles)
-8. Acne (Blemishes): {acne_score}/100 (Higher = clearer skin)
-9. Dark Circles (Under-eye): {dark_circles_score}/100 (Higher = less visible)
-10. Redness (Sensitivity): {redness_score}/100 (Higher = less redness)
+Focus on products for {skin_type} skin type, {age_range} age range.
 
-**REQUIRED INGREDIENTS (from ORBO analysis):
-{', '.join(required_ingredients) if required_ingredients else 'Hyaluronic Acid, Niacinamide, Ceramides'}
+User's skin analysis shows:
 
-**USER PROFILE:**
-- Age Range: {age_range}
-- Skin Type: {skin_type}
-- Gender: {gender}
+- Hydration: {hydration_score}/100
+- Acne/Blemishes: {acne_score}/100  
+- Dark spots: {dark_spots_score}/100
+- Fine lines: {wrinkles_score}/100
+- Redness: {redness_score}/100
 
-**LOCATION & PREFERENCES:**
-- City/Region: {user_location_str}
-- Preferred Shopping Method: {shopping_preference}
-- Preferred Retailers: {preferred_retailers}
-- Climate: {local_climate}
-- Season: {current_season}
+Recommended ingredients: {', '.join(required_ingredients[:5]) if required_ingredients else 'Niacinamide, Hyaluronic Acid, Retinol, Vitamin C, Ceramides'}
 
-**INSTRUCTIONS:**
-Please provide a comprehensive response with the following structure:
+Here is a table listing skincare products with the following columns:
+| Product Name | Price | Description | Online Store Link | Store Availability |
 
-1. **PRIORITY ANALYSIS** (2-3 sentences)
-   - Identify the top 3 skin concerns based on the lowest scores among all 10 ORBO metrics
-   - Focus on metrics scoring below 70/100 as priority areas
-   - Explain how the required ingredients address these specific concerns
+Provide 5-7 specific products that:
+1. Are currently available for purchase online with ACTUAL product links
+2. Include exact prices (e.g., $24.00, $35.99)
+3. Ship to {zip_code} or available in {city} stores
+4. Match the user's {skin_type} skin type and {concerns_str} concerns
+5. Include a mix of price points from drugstore to premium
 
-2. **PRODUCT RECOMMENDATIONS** (organized by routine step)
-   For each product category needed, provide:
-   - **Product Name & Brand**
-   - **Key Active Ingredients** (emphasizing the required ingredients)
-   - **Why It's Recommended** (specific to their skin analysis)
-   - **Expected Results Timeline**
-   - **Where to Buy Locally** (specific stores/websites in their area)
-   - **Price Range**
-   - **Usage Instructions**
-   
-   Categories to cover (as needed):
-   - Morning Cleanser
-   - Evening Cleanser/Oil Cleanser
-   - Treatment Products (serums, acids, etc.)
-   - Moisturizer (AM/PM)
-   - Sunscreen
-   - Spot Treatments
-   - Weekly Treatments (masks, exfoliants)
+IMPORTANT: Include REAL product URLs that can be clicked to purchase. For example:
+- Sephora.com/product-name-here
+- Ulta.com/specific-product
+- Target.com/product-link
+- Amazon.com/dp/product-id
 
-3. **ROUTINE RECOMMENDATIONS**
-   - **Morning Routine** (step-by-step)
-   - **Evening Routine** (step-by-step)
-   - **Weekly Additions**
-   - **Product Introduction Schedule** (for sensitive skin or multiple new products)
-
-4. **LOCAL AVAILABILITY**
-   - List specific stores in {user_location_str} where products can be found
-   - Online retailers that deliver to their area
-   - Local beauty stores or pharmacies
-   - Estimated delivery times for online orders
-
-5. **BUDGET OPTIMIZATION**
-   - Priority products to buy first within their budget
-   - High-impact/low-cost alternatives
-   - When to invest in premium vs drugstore options
-
-6. **SEASONAL CONSIDERATIONS**
-   - How current weather/season affects product choices
-   - Any routine adjustments needed for {current_season}
-
-7. **PROGRESS TRACKING**
-   - What improvements to expect in 2 weeks, 1 month, 3 months
-   - Which skin scores should improve first
-   - When to reassess and potentially add new products
-
-**IMPORTANT GUIDELINES:**
+Do NOT use placeholder links. Research actual products available now.
 - Only recommend products that are actually available in the user's location
 - Include a mix of price points unless budget is very restricted
 - Prioritize products containing the required ingredients from the skin analysis
@@ -447,26 +417,7 @@ RECOMMENDATION PRIORITIES:
 - Consider interactions between different skin concerns
 
 IMPORTANT GUIDELINES:
-- Only recommend products that are currently available and in stock
-- Include accurate, current pricing information
-- Provide specific local store locations when possible
-- Focus on products with proven ingredients for their specific concerns
-- Ensure all recommendations are from reputable brands and retailers
-- Include practical usage instructions
-- Explain why each product matches their specific skin analysis results
-- Prioritize products with strong customer reviews and ratings
-- Be sensitive to the user's experience level with skincare
-- Consider local climate and seasonal factors
-
-FORMAT REQUIREMENTS:
-- Follow the exact structure requested in the prompt
-- Always analyze all 10 metrics to identify top concerns
-- Structure responses clearly with product details
-- Include both online and local availability 
-- Provide price ranges, not exact prices
-- Focus on actionable, helpful information
-- Keep explanations clear and encouraging
-- Use markdown formatting for better readability"""
+"""
     
     def _parse_perplexity_response(
         self,
@@ -746,8 +697,8 @@ FORMAT REQUIREMENTS:
     
     def _parse_pipe_separated_format(self, content: str, skin_analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Parse content that appears to be in pipe-separated format
-        Example: **Evening Cleanser** | CeraVe Foaming Face Wash | Niacinamide, Ceramides | ...
+        Parse content that appears to be in pipe-separated table format
+        Example: | Product Name | Price | Description | Online Store Link | Store Availability |
         """
         products = []
         
@@ -764,18 +715,65 @@ FORMAT REQUIREMENTS:
             # Split by pipe separator
             parts = [p.strip() for p in line.split('|') if p.strip()]
             
-            if len(parts) >= 3 and any(brand in ' '.join(parts).lower() for brand in ['cerave', 'neutrogena', 'olay', 'the ordinary', 'paula', 'la roche', 'cetaphil', 'aveeno']):
+            # Expecting format: Product Name | Price | Description | Online Store Link | Store Availability
+            if len(parts) >= 3:
                 product = {}
                 
-                # Parse different parts based on position
-                if parts[0]:  # Category or type (e.g., "Evening Cleanser")
-                    product['category'] = parts[0]
+                # Parse based on table columns
+                if parts[0]:  # Product name
+                    product['name'] = parts[0]
+                    product['brand'] = self._extract_brand(parts[0])
                 
-                if len(parts) > 1:  # Product name and brand
-                    product['name'] = parts[1]
-                    product['brand'] = self._extract_brand(parts[1])
+                if len(parts) > 1 and '$' in parts[1]:  # Price
+                    product['price'] = parts[1]
+                    # Extract numeric price
+                    import re
+                    price_match = re.search(r'\$([\d.]+)', parts[1])
+                    if price_match:
+                        product['current_price'] = float(price_match.group(1))
                 
-                if len(parts) > 2:  # Key ingredients
+                if len(parts) > 2:  # Description
+                    product['description'] = parts[2]
+                    # Try to extract key ingredients from description
+                    product['key_ingredients'] = self._extract_ingredients_from_text(parts[2])
+                
+                if len(parts) > 3:  # Online Store Link
+                    link_text = parts[3]
+                    # Extract URLs from markdown links or plain URLs
+                    url_patterns = [
+                        r'\[([^\]]+)\]\(([^\)]+)\)',  # Markdown link
+                        r'(https?://[^\s]+)',  # Plain URL
+                        r'([\w-]+\.com/[^\s]+)'  # Domain with path
+                    ]
+                    for pattern in url_patterns:
+                        url_match = re.search(pattern, link_text)
+                        if url_match:
+                            if len(url_match.groups()) > 1:
+                                product['affiliate_link'] = url_match.group(2)  # Markdown link URL
+                                product['link_text'] = url_match.group(1)  # Link text
+                            else:
+                                product['affiliate_link'] = url_match.group(1)  # Plain URL
+                            break
+                    
+                    # If no URL found, store the text (might be store name)
+                    if 'affiliate_link' not in product and link_text:
+                        product['retailer'] = link_text
+                
+                if len(parts) > 4:  # Store Availability
+                    availability_text = parts[4]
+                    product['availability'] = {
+                        'local_stores': [],
+                        'online_stores': [],
+                        'location_note': availability_text
+                    }
+                    
+                    # Extract store names
+                    for store in ['Sephora', 'Ulta', 'Target', 'CVS', 'Walgreens', 'Walmart', 'Amazon']:
+                        if store.lower() in availability_text.lower():
+                            if 'online' in availability_text.lower() or '.com' in availability_text:
+                                product['availability']['online_stores'].append(store)
+                            else:
+                                product['availability']['local_stores'].append(store)
                     product['key_ingredients'] = [ing.strip() for ing in parts[2].split(',')]
                 
                 if len(parts) > 3:  # Description/benefits
@@ -823,31 +821,38 @@ FORMAT REQUIREMENTS:
         """
         Format parsed product into standardized recommendation structure
         """
-        # If the product already has properly parsed fields, return it mostly as-is
-        if 'category' in raw_product and 'brand' in raw_product:
-            return raw_product
+        # Extract current price if available
+        current_price = raw_product.get('current_price')
+        price_str = raw_product.get('price', '')
         
-        # Otherwise, do the standard formatting
-        return {
+        # Format the product with all available data
+        formatted = {
             "id": f"perplexity_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{hash(raw_product.get('name', '')) % 10000}",
             "name": raw_product.get('name', 'Product Name'),
             "brand": raw_product.get('brand') or self._extract_brand(raw_product.get('name', '')),
             "category": raw_product.get('category') or self._guess_category(raw_product.get('name', '')),
             "description": raw_product.get('description'),
-            "price_range": raw_product.get('price_range') or self._extract_price_range(raw_product.get('price_info', '$15-25')),
+            "currentPrice": current_price,
+            "priceRange": price_str or raw_product.get('price_range') or '$15-30',
             "availability": raw_product.get('availability') or {
                 "local_stores": self._extract_local_stores(raw_product.get('availability', [])),
                 "online_stores": self._extract_online_stores(raw_product.get('availability', []))
             },
-            "match_reasoning": raw_product.get('match_reasoning') or self._generate_match_reasoning(raw_product, skin_analysis),
-            "compatibility_score": raw_product.get('compatibility_score') or self._estimate_compatibility_score(raw_product, skin_analysis),
-            "usage_instructions": raw_product.get('usage_instructions') or self._generate_usage_instructions(raw_product),
-            "key_ingredients": raw_product.get('key_ingredients') or self._extract_key_ingredients(raw_product),
-            "affiliate_link": raw_product.get('affiliate_link'),
+            "matchReasoning": raw_product.get('match_reasoning') or self._generate_match_reasoning(raw_product, skin_analysis),
+            "compatibilityScore": raw_product.get('compatibility_score') or self._estimate_compatibility_score(raw_product, skin_analysis),
+            "usageInstructions": raw_product.get('usage_instructions') or self._generate_usage_instructions(raw_product),
+            "keyIngredients": raw_product.get('key_ingredients') or self._extract_key_ingredients(raw_product),
+            "affiliateLink": raw_product.get('affiliate_link'),
+            "productUrl": raw_product.get('affiliate_link'),  # Also set as productUrl
+            "retailer": raw_product.get('retailer') or raw_product.get('link_text', ''),
             "source": "perplexity_search",
-            "search_timestamp": datetime.now(timezone.utc).isoformat(),
+            "searchTimestamp": datetime.now(timezone.utc).isoformat(),
+            "inStock": True,  # Assume in stock if returned by search
             "raw_data": raw_product
         }
+        
+        # Only include non-None values
+        return {k: v for k, v in formatted.items() if v is not None}
     
     async def _get_cached_recommendations(
         self,
@@ -953,10 +958,18 @@ FORMAT REQUIREMENTS:
         user_location: Dict[str, str]
     ) -> List[Dict[str, Any]]:
         """
-        Create fallback recommendations when Perplexity search fails
+        Create location-aware fallback recommendations when Perplexity search fails
         """
         skin_type = skin_analysis.get("skin_type", "combination")
         concerns = skin_analysis.get("concerns", ["hydration"])
+        
+        # Get location details for customization
+        city = user_location.get('city', 'your area')
+        state = user_location.get('state', 'US')
+        zip_code = user_location.get('zip_code', '')
+        
+        # Customize store availability based on region
+        local_stores = self._get_regional_stores(state)
         
         fallback_products = [
             {
@@ -966,8 +979,9 @@ FORMAT REQUIREMENTS:
                 "category": "cleanser",
                 "price_range": "$12-16",
                 "availability": {
-                    "local_stores": ["CVS", "Target", "Walgreens"],
-                    "online_stores": ["Amazon", "Target.com", "CVS.com"]
+                    "local_stores": local_stores,
+                    "online_stores": ["Amazon", "Target.com", "CVS.com"],
+                    "location_note": f"Available in most stores near {city}, {state}"
                 },
                 "match_reasoning": f"Gentle cleanser perfect for {skin_type} skin, contains ceramides for hydration",
                 "compatibility_score": 8.5,
@@ -982,8 +996,9 @@ FORMAT REQUIREMENTS:
                 "category": "serum",
                 "price_range": "$6-8",
                 "availability": {
-                    "local_stores": ["Ulta"],
-                    "online_stores": ["Amazon", "Ulta.com", "Sephora.com"]
+                    "local_stores": [store for store in ["Ulta", "Sephora"] if store in local_stores or "Ulta" in local_stores],
+                    "online_stores": ["Amazon", "Ulta.com", "Sephora.com"],
+                    "location_note": f"Check availability at beauty stores in {city}"
                 },
                 "match_reasoning": f"Addresses pore concerns common in {skin_type} skin, budget-friendly option",
                 "compatibility_score": 8.2,
@@ -998,8 +1013,9 @@ FORMAT REQUIREMENTS:
                 "category": "moisturizer",
                 "price_range": "$15-20",
                 "availability": {
-                    "local_stores": ["CVS", "Target", "Walmart", "Walgreens"],
-                    "online_stores": ["Amazon", "Target.com", "Walmart.com"]
+                    "local_stores": local_stores,
+                    "online_stores": ["Amazon", "Target.com", "Walmart.com"],
+                    "location_note": f"Widely available in {city}, {state}"
                 },
                 "match_reasoning": f"Lightweight hydration ideal for {skin_type} skin, non-comedogenic formula",
                 "compatibility_score": 8.0,
@@ -1014,8 +1030,9 @@ FORMAT REQUIREMENTS:
                 "category": "sunscreen",
                 "price_range": "$20-25",
                 "availability": {
-                    "local_stores": ["CVS", "Walgreens", "Ulta"],
-                    "online_stores": ["Amazon", "CVS.com", "LaRoche-Posay.com"]
+                    "local_stores": [store for store in local_stores if store in ["CVS", "Walgreens", "Ulta"]],
+                    "online_stores": ["Amazon", "CVS.com", "LaRoche-Posay.com"],
+                    "location_note": f"Available at pharmacies in {city}, {state}"
                 },
                 "match_reasoning": "Essential daily sun protection, lightweight formula suitable for all skin types",
                 "compatibility_score": 9.0,
@@ -1057,6 +1074,24 @@ FORMAT REQUIREMENTS:
             return 'toner'
         else:
             return 'treatment'
+    
+    def _extract_ingredients_from_text(self, text: str) -> List[str]:
+        """Extract ingredient names from description text"""
+        ingredients = []
+        # Common skincare ingredients to look for
+        common_ingredients = [
+            'Niacinamide', 'Hyaluronic Acid', 'Retinol', 'Vitamin C', 'Ceramides',
+            'Salicylic Acid', 'Glycolic Acid', 'Peptides', 'Caffeine', 'Zinc',
+            'Vitamin E', 'Squalane', 'Glycerin', 'AHA', 'BHA', 'PHA',
+            'Benzoyl Peroxide', 'Adapalene', 'Azelaic Acid', 'Kojic Acid'
+        ]
+        
+        text_lower = text.lower()
+        for ingredient in common_ingredients:
+            if ingredient.lower() in text_lower:
+                ingredients.append(ingredient)
+        
+        return ingredients[:5]  # Return top 5 ingredients found
     
     def _extract_price_range(self, price_text: str) -> str:
         """Extract price range from text"""
@@ -1318,6 +1353,38 @@ FORMAT REQUIREMENTS:
             "55_plus": "55+"
         }
         return age_mapping.get(age_range, "25-34")
+    
+    def _get_regional_stores(self, state: str) -> List[str]:
+        """
+        Get common stores based on region/state
+        """
+        # Common nationwide stores
+        base_stores = ["CVS", "Walgreens", "Target"]
+        
+        # Regional variations
+        state_upper = state.upper()[:2] if state else ""
+        
+        # West Coast
+        if state_upper in ["CA", "WA", "OR", "NV", "AZ"]:
+            return base_stores + ["Ulta", "Sephora", "Rite Aid", "Trader Joe's"]
+        # Northeast
+        elif state_upper in ["NY", "NJ", "CT", "MA", "PA", "MD"]:
+            return base_stores + ["Duane Reade", "Ulta", "Sephora", "Wegmans"]
+        # Southeast
+        elif state_upper in ["FL", "GA", "SC", "NC", "TN", "AL", "MS", "LA"]:
+            return base_stores + ["Publix", "Ulta", "Sally Beauty", "Walmart"]
+        # Midwest
+        elif state_upper in ["IL", "MI", "OH", "IN", "WI", "MN", "IA"]:
+            return base_stores + ["Meijer", "Kroger", "Ulta", "Walmart"]
+        # Texas
+        elif state_upper == "TX":
+            return base_stores + ["H-E-B", "Ulta", "Sephora", "Sally Beauty"]
+        # Mountain/Central
+        elif state_upper in ["CO", "UT", "MT", "WY", "ID", "NM"]:
+            return base_stores + ["King Soopers", "Smith's", "Walmart", "Ulta"]
+        # Default
+        else:
+            return base_stores + ["Walmart", "Ulta", "Amazon Fresh"]
     
     def _determine_climate(self, state: str) -> str:
         """
