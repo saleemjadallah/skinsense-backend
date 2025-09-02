@@ -715,11 +715,24 @@ IMPORTANT GUIDELINES:
             # Split by pipe separator
             parts = [p.strip() for p in line.split('|') if p.strip()]
             
-            # Skip header rows - check if first column contains generic header text
+            # Skip header rows and separator rows
             if len(parts) > 0:
-                first_col_lower = parts[0].lower()
+                first_col = parts[0].strip()
+                first_col_lower = first_col.lower()
+                
+                # Skip header rows
                 if any(header in first_col_lower for header in ['product name', 'product', 'item', 'name']):
-                    logger.info(f"[PERPLEXITY DEBUG] Skipping header row: {parts[0]}")
+                    logger.info(f"[PERPLEXITY DEBUG] Skipping header row: {first_col}")
+                    continue
+                
+                # Skip separator rows (rows with only dashes, equals, or underscores)
+                if all(c in ['-', '=', '_', ' '] for c in first_col):
+                    logger.info(f"[PERPLEXITY DEBUG] Skipping separator row: {first_col[:20]}...")
+                    continue
+                
+                # Skip empty or too short names
+                if len(first_col) < 3:
+                    logger.info(f"[PERPLEXITY DEBUG] Skipping invalid row with short name: {first_col}")
                     continue
             
             # Expecting format: Product Name | Price | Description | Online Store Link | Store Availability
@@ -728,7 +741,7 @@ IMPORTANT GUIDELINES:
                 
                 # Parse based on table columns
                 if parts[0]:  # Product name
-                    product['name'] = parts[0]
+                    product['name'] = parts[0].strip()
                     product['brand'] = self._extract_brand(parts[0])
                 
                 if len(parts) > 1 and '$' in parts[1]:  # Price
@@ -835,12 +848,13 @@ IMPORTANT GUIDELINES:
         current_price = raw_product.get('current_price')
         price_str = raw_product.get('price', '')
         
-        # Format the product with all available data
+        # Format the product with all available data - ensure required fields are never null
+        product_name = raw_product.get('name', 'Unknown Product')
         formatted = {
-            "id": f"perplexity_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{hash(raw_product.get('name', '')) % 10000}",
-            "name": raw_product.get('name', 'Product Name'),
-            "brand": raw_product.get('brand') or self._extract_brand(raw_product.get('name', '')),
-            "category": raw_product.get('category') or self._guess_category(raw_product.get('name', '')),
+            "id": f"perplexity_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{hash(product_name) % 10000}",
+            "name": product_name,
+            "brand": raw_product.get('brand') or self._extract_brand(product_name) or 'Unknown Brand',
+            "category": raw_product.get('category') or self._guess_category(product_name) or 'skincare',
             "description": raw_product.get('description'),
             "currentPrice": current_price,
             "priceRange": price_str or raw_product.get('price_range') or '$15-30',
