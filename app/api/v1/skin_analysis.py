@@ -192,7 +192,7 @@ async def process_skin_analysis(
         )
         
         # Generate AI feedback
-        ai_feedback = await openai_service.generate_skin_feedback(
+        ai_feedback = openai_service.generate_skin_feedback(
             orbo_analysis,
             user_data.get("profile", {}),
             previous_analyses
@@ -843,7 +843,7 @@ async def save_orbo_sdk_result(
         ai_feedback = None
         try:
             logger.info("Generating OpenAI feedback...")
-            ai_feedback_dict = await openai_service.generate_skin_feedback(
+            ai_feedback_dict = openai_service.generate_skin_feedback(
                 orbo_response.dict(),
                 current_user.dict()
             )
@@ -1003,7 +1003,7 @@ async def run_ai_for_analysis(
             else:
                 logger.info("No metrics found in orbo_response!")
         
-        # Call OpenAI synchronously (decorator now handles both sync and async)
+        # Call OpenAI synchronously (PyMongo is sync, not async)
         ai_feedback_dict = openai_service.generate_skin_feedback(orbo_response, current_user.dict())
         logger.info(f"OpenAI raw response: {ai_feedback_dict}")
         if ai_feedback_dict:
