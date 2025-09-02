@@ -710,6 +710,64 @@ IMPORTANT GUIDELINES:
         logger.info(f"[PERPLEXITY DEBUG] Simple extraction found {len(products)} products")
         return products
     
+    def _extract_retailer_from_url(self, url: str) -> str:
+        """Extract retailer name from URL"""
+        if not url:
+            return None
+            
+        url_lower = url.lower()
+        if 'paulaschoice' in url_lower:
+            return "Paula's Choice"
+        elif 'sephora' in url_lower:
+            return 'Sephora'
+        elif 'ulta' in url_lower:
+            return 'Ulta'
+        elif 'amazon' in url_lower:
+            return 'Amazon'
+        elif 'target' in url_lower:
+            return 'Target'
+        elif 'cvs' in url_lower:
+            return 'CVS'
+        elif 'walgreens' in url_lower:
+            return 'Walgreens'
+        elif 'walmart' in url_lower:
+            return 'Walmart'
+        else:
+            # Try to extract domain name
+            domain_match = re.search(r'(?:https?://)?(?:www\.)?([^/.]+)', url)
+            if domain_match:
+                return domain_match.group(1).capitalize()
+        return None
+    
+    def _extract_url_from_text(self, text: str) -> str:
+        """Extract URL from text that might contain markdown or plain URLs"""
+        if not text:
+            return None
+            
+        # Try different URL patterns
+        url_patterns = [
+            r'\[([^\]]+)\]\(([^\)]+)\)',  # Markdown link [text](url)
+            r'(https?://[^\s\)]+)',  # Plain URL starting with http
+            r'(www\.[^\s\)]+)',  # URL starting with www
+            r'([a-zA-Z0-9\-]+\.com[^\s\)]*)'  # Domain.com pattern
+        ]
+        
+        for pattern in url_patterns:
+            match = re.search(pattern, text)
+            if match:
+                if len(match.groups()) > 1:
+                    # Markdown link - return the URL part
+                    return match.group(2)
+                else:
+                    # Plain URL
+                    url = match.group(1)
+                    # Add https:// if missing
+                    if not url.startswith('http'):
+                        url = 'https://' + url
+                    return url
+        
+        return None
+    
     def _parse_pipe_separated_format(self, content: str, skin_analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Parse content that appears to be in pipe-separated table format
@@ -759,60 +817,84 @@ IMPORTANT GUIDELINES:
                     product['name'] = parts[0].strip()
                     product['brand'] = self._extract_brand(parts[0])
                 
-                if len(parts) > 1 and '$' in parts[1]:  # Price
-                    product['price'] = parts[1]
-                    # Extract numeric price
-                    price_match = re.search(r'\$([\d.]+)', parts[1])
-                    if price_match:
-                        product['current_price'] = float(price_match.group(1))
+                if len(parts) > 1:  # Price column
+                    price_text = parts[1].strip()
+                    if '$' in price_text:
+                        product['price'] = price_text
+                        # Extract numeric price
+                        price_match = re.search(r'\$([\d.]+)', price_text)
+                        if price_match:
+                            product['current_price'] = float(price_match.group(1))
+                    else:
+                        # Sometimes price might be in a different format or missing
+                        product['price'] = price_text if price_text and price_text.lower() != 'price' else None
                 
-                if len(parts) > 2:  # Description
-                    product['description'] = parts[2]
-                    # Try to extract key ingredients from description
-                    product['key_ingredients'] = self._extract_ingredients_from_text(parts[2])
+                if len(parts) > 2:  # Description column
+                    desc_text = parts[2].strip()
+                    # Check if this looks like a URL (sometimes URLs appear in description column)
+                    if 'http' in desc_text or '.com' in desc_text:
+                        # This is likely a URL, not a description
+                        product['affiliate_link'] = self._extract_url_from_text(desc_text)
+                        product['description'] = None  # No real description
+                    else:
+                        product['description'] = desc_text
+                        # Try to extract key ingredients from description
+                        product['key_ingredients'] = self._extract_ingredients_from_text(desc_text)
                 
-                if len(parts) > 3:  # Online Store Link
-                    link_text = parts[3]
-                    # Extract URLs from markdown links or plain URLs
-                    url_patterns = [
-                        r'\[([^\]]+)\]\(([^\)]+)\)',  # Markdown link
-                        r'(https?://[^\s]+)',  # Plain URL
-                        r'([\w-]+\.com/[^\s]+)'  # Domain with path
-                    ]
-                    for pattern in url_patterns:
-                        url_match = re.search(pattern, link_text)
-                        if url_match:
-                            if len(url_match.groups()) > 1:
-                                product['affiliate_link'] = url_match.group(2)  # Markdown link URL
-                                product['link_text'] = url_match.group(1)  # Link text
+                if len(parts) > 3:  # Online Store Link column
+                    link_text = parts[3].strip()
+                    # Only process if we haven't already found a URL in description column
+                    if 'affiliate_link' not in product:
+                        extracted_url = self._extract_url_from_text(link_text)
+                        if extracted_url:
+                            product['affiliate_link'] = extracted_url
+                            # Extract retailer name from URL or link text
+                            if 'paulaschoice' in extracted_url.lower():
+                                product['retailer'] = "Paula's Choice"
+                            elif 'sephora' in extracted_url.lower():
+                                product['retailer'] = 'Sephora'
+                            elif 'ulta' in extracted_url.lower():
+                                product['retailer'] = 'Ulta'
+                            elif 'amazon' in extracted_url.lower():
+                                product['retailer'] = 'Amazon'
+                            elif 'target' in extracted_url.lower():
+                                product['retailer'] = 'Target'
                             else:
-                                product['affiliate_link'] = url_match.group(1)  # Plain URL
-                            break
-                    
-                    # If no URL found, store the text (might be store name)
-                    if 'affiliate_link' not in product and link_text:
-                        product['retailer'] = link_text
+                                # Try to extract from markdown link text
+                                md_match = re.search(r'\[([^\]]+)\]', link_text)
+                                if md_match:
+                                    product['retailer'] = md_match.group(1)
+                        elif link_text and link_text.lower() not in ['online store link', 'link', 'url']:
+                            # If no URL but has text, it might be store name
+                            product['retailer'] = link_text
                 
-                if len(parts) > 4:  # Store Availability
-                    availability_text = parts[4]
-                    product['availability'] = {
-                        'local_stores': [],
-                        'online_stores': [],
-                        'location_note': availability_text
-                    }
+                if len(parts) > 4:  # Store Availability column
+                    availability_text = parts[4].strip()
+                    local_stores = []
+                    online_stores = []
                     
-                    # Extract store names
-                    for store in ['Sephora', 'Ulta', 'Target', 'CVS', 'Walgreens', 'Walmart', 'Amazon']:
+                    # Parse store availability
+                    store_names = ['Sephora', 'Ulta', 'Target', 'CVS', 'Walgreens', 'Walmart', 'Amazon', "Paula's Choice"]
+                    for store in store_names:
                         if store.lower() in availability_text.lower():
-                            if 'online' in availability_text.lower() or '.com' in availability_text:
-                                product['availability']['online_stores'].append(store)
+                            if 'online' in availability_text.lower() or '.com' in availability_text.lower():
+                                online_stores.append(store)
+                            elif 'store' in availability_text.lower() or 'location' in availability_text.lower():
+                                local_stores.append(store)
                             else:
-                                product['availability']['local_stores'].append(store)
-                    product['key_ingredients'] = [ing.strip() for ing in parts[2].split(',')]
+                                # Default to online if not specified
+                                online_stores.append(store)
+                    
+                    # If we have a retailer from the URL, ensure it's in online stores
+                    if product.get('retailer') and product['retailer'] not in online_stores:
+                        online_stores.append(product['retailer'])
+                    
+                    product['availability'] = {
+                        'local_stores': local_stores,
+                        'online_stores': online_stores,
+                        'location_note': availability_text if availability_text and availability_text.lower() != 'store availability' else None
+                    }
                 
-                if len(parts) > 3:  # Description/benefits
-                    product['description'] = parts[3]
-                    product['match_reasoning'] = parts[3]
                 
                 if len(parts) > 4:  # Timeline
                     product['expected_results'] = parts[4]
@@ -865,14 +947,21 @@ IMPORTANT GUIDELINES:
         
         # Format the product with all available data - ensure required fields are never null
         product_name = raw_product.get('name', 'Unknown Product')
+        
+        # Ensure we have a proper description (not a URL)
+        description = raw_product.get('description')
+        if description and ('http' in description or '.com' in description):
+            # If description contains URL, it's not a real description
+            description = f"High-quality skincare product targeting specific skin concerns"
+        
         formatted = {
             "id": f"perplexity_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{hash(product_name) % 10000}",
             "name": product_name,
             "brand": raw_product.get('brand') or self._extract_brand(product_name) or 'Unknown Brand',
             "category": raw_product.get('category') or self._guess_category(product_name) or 'skincare',
-            "description": raw_product.get('description'),
+            "description": description,
             "currentPrice": current_price,
-            "priceRange": price_str or raw_product.get('price_range') or '$15-30',
+            "priceRange": price_str or raw_product.get('price_range'),
             "availability": raw_product.get('availability') or {
                 "local_stores": self._extract_local_stores(raw_product.get('availability', [])),
                 "online_stores": self._extract_online_stores(raw_product.get('availability', []))
@@ -882,8 +971,9 @@ IMPORTANT GUIDELINES:
             "usageInstructions": raw_product.get('usage_instructions') or self._generate_usage_instructions(raw_product),
             "keyIngredients": raw_product.get('key_ingredients') or self._extract_key_ingredients(raw_product),
             "affiliateLink": raw_product.get('affiliate_link'),
-            "productUrl": raw_product.get('affiliate_link'),  # Also set as productUrl
-            "retailer": raw_product.get('retailer') or raw_product.get('link_text', ''),
+            "productUrl": raw_product.get('affiliate_link'),  # Also set as productUrl for Shop Now button
+            "trackingLink": raw_product.get('affiliate_link'),  # Also set as trackingLink
+            "retailer": raw_product.get('retailer') or self._extract_retailer_from_url(raw_product.get('affiliate_link')),
             "source": "perplexity_search",
             "searchTimestamp": datetime.now(timezone.utc).isoformat(),
             "inStock": True,  # Assume in stock if returned by search
