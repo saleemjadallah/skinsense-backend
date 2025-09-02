@@ -366,7 +366,7 @@ class PlanService:
         return predictions
     
     def get_user_plans(self, user_id: str, status: Optional[str] = None) -> List[Dict]:
-        """Get all plans for a user"""
+        """Get all plans for a user with optimized performance"""
         
         if self.db is None:
             logger.error("Database connection is None in get_user_plans")
@@ -376,38 +376,64 @@ class PlanService:
             if self.db is None:
                 raise RuntimeError("Failed to establish database connection")
         
-        query = {"user_id": ObjectId(user_id)}
-        if status:
-            query["status"] = status
-        
-        plans = list(self.db.plans.find(query).sort("created_at", -1))
-        
-        result = []
-        for plan in plans:
-            # Get routine and goal counts
-            routine_count = len(plan.get("routine_ids", []))
-            goal_count = len(plan.get("goal_ids", []))
+        try:
+            query = {"user_id": ObjectId(user_id)}
+            if status:
+                query["status"] = status
             
-            result.append({
-                "id": str(plan["_id"]),
-                "name": plan.get("name", "Unnamed Plan"),
-                "description": plan.get("description", ""),
-                "plan_type": plan.get("plan_type", "custom"),
-                "status": plan.get("status", "active"),
-                "current_week": plan.get("current_week", 1),
-                "duration_weeks": plan.get("duration_weeks", 4),
-                "completion_rate": (plan.get("current_week", 1) / plan.get("duration_weeks", 4)) * 100,
-                "routine_count": routine_count,
-                "goal_count": goal_count,
-                "target_concerns": plan.get("target_concerns", []),
-                "created_at": plan.get("created_at", datetime.utcnow()).isoformat(),
-                "started_at": plan.get("started_at", datetime.utcnow()).isoformat() if plan.get("started_at") else None
-            })
-        
-        return result
+            # Use projection to only fetch needed fields for better performance
+            projection = {
+                "_id": 1,
+                "name": 1,
+                "description": 1,
+                "plan_type": 1,
+                "status": 1,
+                "current_week": 1,
+                "duration_weeks": 1,
+                "routine_ids": 1,
+                "goal_ids": 1,
+                "target_concerns": 1,
+                "created_at": 1,
+                "started_at": 1
+            }
+            
+            plans = list(self.db.plans.find(query, projection).sort("created_at", -1))
+            
+            result = []
+            for plan in plans:
+                # Count non-null IDs for better accuracy
+                routine_count = len([rid for rid in plan.get("routine_ids", []) if rid is not None])
+                goal_count = len([gid for gid in plan.get("goal_ids", []) if gid is not None])
+                
+                # Calculate completion rate more safely
+                current_week = plan.get("current_week", 1)
+                duration_weeks = plan.get("duration_weeks", 4)
+                completion_rate = min(100, (current_week / duration_weeks) * 100) if duration_weeks > 0 else 0
+                
+                result.append({
+                    "id": str(plan["_id"]),
+                    "name": plan.get("name", "Unnamed Plan"),
+                    "description": plan.get("description", ""),
+                    "plan_type": plan.get("plan_type", "custom"),
+                    "status": plan.get("status", "active"),
+                    "current_week": current_week,
+                    "duration_weeks": duration_weeks,
+                    "completion_rate": completion_rate,
+                    "routine_count": routine_count,
+                    "goal_count": goal_count,
+                    "target_concerns": plan.get("target_concerns", []),
+                    "created_at": plan.get("created_at", datetime.utcnow()).isoformat(),
+                    "started_at": plan.get("started_at").isoformat() if plan.get("started_at") else None
+                })
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in get_user_plans: {str(e)}")
+            raise
     
     def get_plan_details(self, plan_id: str) -> Dict[str, Any]:
-        """Get detailed plan information"""
+        """Get detailed plan information with optimized queries"""
         
         if self.db is None:
             logger.error("Database connection is None in get_plan_details")
@@ -416,6 +442,147 @@ class PlanService:
             self.db = get_database()
             if self.db is None:
                 raise RuntimeError("Failed to establish database connection")
+        
+        try:
+            # Use aggregation pipeline for better performance
+            pipeline = [
+                {"$match": {"_id": ObjectId(plan_id)}},
+                {
+                    "$lookup": {
+                        "from": "routines",
+                        "localField": "routine_ids",
+                        "foreignField": "_id",
+                        "as": "routines"
+                    }
+                },
+                {
+                    "$lookup": {
+                        "from": "goals",
+                        "localField": "goal_ids",
+                        "foreignField": "_id",
+                        "as": "goals"
+                    }
+                },
+                {
+                    "$lookup": {
+                        "from": "plan_progress",
+                        "let": {"plan_id": "$_id"},
+                        "pipeline": [
+                            {"$match": {"$expr": {"$eq": ["$plan_id", "$$plan_id"]}}},
+                            {"$sort": {"week_number": -1}},
+                            {"$limit": 1}
+                        ],
+                        "as": "latest_progress"
+                    }
+                }
+            ]
+            
+            result = list(self.db.plans.aggregate(pipeline))
+            if not result:
+                raise ValueError("Plan not found")
+                
+            plan = result[0]
+            routines = plan.get("routines", [])
+            goals = plan.get("goals", [])
+            latest_progress = plan.get("latest_progress", [{}])[0] if plan.get("latest_progress") else None
+            
+            # Check if today is marked complete and count weekly progress in parallel
+            today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+            week_start = today - timedelta(days=today.weekday())
+            week_end = week_start + timedelta(days=6)
+            
+            # Use aggregation for daily progress stats
+            daily_progress_pipeline = [
+                {
+                    "$match": {
+                        "plan_id": ObjectId(plan_id),
+                        "date": {"$gte": week_start, "$lte": week_end}
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": None,
+                        "days_completed": {"$sum": {"$cond": ["$completed", 1, 0]}},
+                        "today_completed": {
+                            "$max": {
+                                "$cond": [
+                                    {"$and": [{"$eq": ["$date", today]}, "$completed"]},
+                                    True,
+                                    False
+                                ]
+                            }
+                        }
+                    }
+                }
+            ]
+            
+            daily_stats = list(self.db.plan_daily_progress.aggregate(daily_progress_pipeline))
+            if daily_stats:
+                days_completed_this_week = daily_stats[0].get("days_completed", 0)
+                today_completed = daily_stats[0].get("today_completed", False)
+            else:
+                days_completed_this_week = 0
+                today_completed = False
+        
+            # Calculate current week stats with better performance
+            current_week_stats = {
+                "completion_rate": (days_completed_this_week / 7) * 100 if days_completed_this_week > 0 else 0,
+                "routines_completed": sum(1 for r in routines if r.get("completion_count", 0) > 0),
+                "goals_progress": sum(g.get("progress_percentage", 0) for g in goals) / len(goals) if goals else 0,
+                "today_completed": today_completed,
+                "days_completed_this_week": days_completed_this_week
+            }
+        except Exception as e:
+            logger.error(f"Error in optimized get_plan_details: {str(e)}")
+            # Fallback to original method if aggregation fails
+            return self._get_plan_details_fallback(plan_id)
+        
+        return {
+            "id": str(plan["_id"]),
+            "user_id": str(plan["user_id"]) if plan.get("user_id") else None,
+            "name": plan.get("name", "Unnamed Plan"),
+            "description": plan.get("description", ""),
+            "plan_type": plan.get("plan_type", "custom"),
+            "status": plan.get("status", "active"),
+            "current_week": plan.get("current_week", 1),
+            "duration_weeks": plan.get("duration_weeks", 4),
+            "started_at": plan.get("started_at", plan.get("created_at", datetime.utcnow())).isoformat(),
+            "target_concerns": plan.get("target_concerns", []),
+            "personalization_data": plan.get("personalization_data", {}),
+            "current_milestone": next(
+                (m for m in plan.get("weekly_milestones", []) 
+                 if m.get("week", m.get("week_number")) == plan.get("current_week", 1)),
+                None
+            ),
+            "routines": [
+                {
+                    "id": str(r["_id"]),
+                    "name": r.get("name", "Unnamed Routine"),
+                    "type": r.get("type", "custom"),
+                    "completion_count": r.get("completion_count", 0),
+                    "completed_today": r.get("last_completed") and r.get("last_completed").date() == today.date()
+                }
+                for r in routines
+            ],
+            "goals": [
+                {
+                    "id": str(g["_id"]),
+                    "title": g.get("title", "Unnamed Goal"),
+                    "progress_percentage": g.get("progress_percentage", 0)
+                }
+                for g in goals
+            ],
+            "current_week_stats": current_week_stats,
+            "effectiveness_predictions": plan.get("effectiveness_predictions", {}),
+            "latest_progress": {
+                "week_number": latest_progress.get("week_number", 1),
+                "skin_improvements": latest_progress.get("skin_improvements", {}),
+                "milestone_achieved": latest_progress.get("milestone_achieved", False)
+            } if latest_progress else None
+        }
+    
+    def _get_plan_details_fallback(self, plan_id: str) -> Dict[str, Any]:
+        """Fallback method for getting plan details if aggregation fails"""
         
         plan = self.db.plans.find_one({"_id": ObjectId(plan_id)})
         if not plan:
@@ -463,11 +630,11 @@ class PlanService:
             "completed": True
         })
         
-        # Calculate current week stats (simplified for now)
+        # Calculate current week stats
         current_week_stats = {
-            "completion_rate": 0,
-            "routines_completed": 0,
-            "goals_progress": 0,
+            "completion_rate": (days_completed_this_week / 7) * 100 if days_completed_this_week > 0 else 0,
+            "routines_completed": sum(1 for r in routines if r.get("completion_count", 0) > 0),
+            "goals_progress": sum(g.get("progress_percentage", 0) for g in goals) / len(goals) if goals else 0,
             "today_completed": today_completed,
             "days_completed_this_week": days_completed_this_week
         }
