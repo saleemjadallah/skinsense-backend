@@ -102,6 +102,21 @@ class PerplexityRecommendationService:
             # Step 3: Combine and format results
             all_recommendations = cached_recommendations + fresh_recommendations
             
+            # Ensure all products have required fields
+            validated_recommendations = []
+            for product in all_recommendations:
+                # Ensure required fields exist
+                if 'name' not in product or not product['name']:
+                    product['name'] = 'Unknown Product'
+                if 'brand' not in product or not product['brand']:
+                    product['brand'] = 'Unknown Brand'
+                if 'category' not in product or not product['category']:
+                    product['category'] = 'skincare'
+                
+                validated_recommendations.append(product)
+            
+            all_recommendations = validated_recommendations
+            
             # If no recommendations from either source, return error
             if not all_recommendations:
                 logger.error("CRITICAL: No recommendations from cache or Perplexity API")
@@ -875,8 +890,21 @@ IMPORTANT GUIDELINES:
             "raw_data": raw_product
         }
         
-        # Only include non-None values
-        return {k: v for k, v in formatted.items() if v is not None}
+        # Only include non-None values but ensure required fields are always present
+        cleaned = {k: v for k, v in formatted.items() if v is not None}
+        
+        # Ensure required fields are ALWAYS present
+        if 'name' not in cleaned:
+            cleaned['name'] = 'Unknown Product'
+        if 'brand' not in cleaned:
+            cleaned['brand'] = 'Unknown Brand'
+        if 'category' not in cleaned:
+            cleaned['category'] = 'skincare'
+        
+        # Log the product for debugging
+        logger.info(f"[PERPLEXITY DEBUG] Formatted product: name={cleaned.get('name')}, category={cleaned.get('category')}, brand={cleaned.get('brand')}")
+        
+        return cleaned
     
     async def _get_cached_recommendations(
         self,
