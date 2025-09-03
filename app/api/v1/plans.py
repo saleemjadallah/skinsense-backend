@@ -100,13 +100,22 @@ async def get_active_plan(
         )
         
         if not plans:
+            logger.info(f"No active plans found for user {current_user.id}")
             return None
         
         # Get details of the first active plan
-        plan_details = plan_service.get_plan_details(plans[0]["id"])
+        plan_id = plans[0].get("id")
+        if not plan_id:
+            logger.warning(f"Active plan found but has no ID for user {current_user.id}")
+            return None
+            
+        plan_details = plan_service.get_plan_details(plan_id)
         
         return PlanDetailResponse(**plan_details)
         
+    except ValueError as e:
+        logger.info(f"Plan not found or invalid: {str(e)}")
+        return None
     except Exception as e:
         logger.error(f"Error fetching active plan: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to fetch active plan")

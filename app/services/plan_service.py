@@ -210,7 +210,7 @@ class PlanService:
             )
             
             # Save to database
-            plan_dict = plan.dict(by_alias=True)
+            plan_dict = plan.dict(by_alias=True, exclude={"id"})
             result = self.db.plans.insert_one(plan_dict)
             plan.id = result.inserted_id
             
@@ -444,6 +444,10 @@ class PlanService:
                 raise RuntimeError("Failed to establish database connection")
         
         try:
+            # Validate plan_id first
+            if not plan_id or plan_id == "None":
+                raise ValueError("Invalid plan ID provided")
+            
             # Use aggregation pipeline for better performance
             pipeline = [
                 {"$match": {"_id": ObjectId(plan_id)}},
