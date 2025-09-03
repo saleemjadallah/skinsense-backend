@@ -24,6 +24,7 @@ from app.services.s3_service import s3_service
 from app.services.perplexity_service import perplexity_service
 from app.services.recommendation_service import recommendation_service
 from app.services.progress_service import progress_service
+from app.services.subscription_service import SubscriptionService
 from typing import Dict, Any
 import logging
 import json
@@ -78,20 +79,26 @@ async def create_skin_analysis(
 ):
     """Create new skin analysis"""
     
-    # Check rate limits for free users
-    if current_user.subscription.tier == "basic":
-        # Check monthly limit (5 analyses for free users)
-        start_of_month = get_utc_now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        monthly_count = db.skin_analyses.count_documents({
-            "user_id": current_user.id,
-            "created_at": {"$gte": start_of_month}
-        })
-        
-        if monthly_count >= 5:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Monthly analysis limit reached. Upgrade to Plus for unlimited analyses."
-            )
+    # Check scan limits using subscription service
+    scan_status = SubscriptionService.check_scan_limit(current_user)
+    if not scan_status["allowed"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": "Monthly scan limit reached",
+                "remaining_scans": 0,
+                "reset_date": scan_status.get("reset_date").isoformat() if scan_status.get("reset_date") else None,
+                "upgrade_prompt": "Upgrade to Premium for unlimited skin scans!"
+            }
+        )
+    
+    # Increment scan usage
+    SubscriptionService.increment_scan_usage(current_user)
+    # Update user in database
+    db.users.update_one(
+        {"_id": current_user.id},
+        {"$set": {"subscription": current_user.subscription.dict()}}
+    )
     
     try:
         # Decode base64 image

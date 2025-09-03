@@ -58,11 +58,23 @@ class SkinProfile(BaseModel):
     ai_confidence_score: Optional[float] = None  # Confidence in AI detection
     last_analysis_date: Optional[datetime] = None
 
+class SubscriptionUsage(BaseModel):
+    """Track usage limits for free tier"""
+    monthly_scans_used: int = 0
+    monthly_scans_limit: int = 3
+    daily_pal_questions_used: int = 0
+    daily_pal_questions_limit: int = 5
+    last_reset_date: datetime = Field(default_factory=datetime.utcnow)
+    last_pal_reset_date: datetime = Field(default_factory=datetime.utcnow)
+
 class SubscriptionInfo(BaseModel):
-    tier: str = "basic"  # "basic", "plus", "pro"
+    tier: str = "free"  # "free" or "premium"
     expires_at: Optional[datetime] = None
     stripe_customer_id: Optional[str] = None
     is_active: bool = True
+    usage: SubscriptionUsage = Field(default_factory=SubscriptionUsage)
+    upgraded_at: Optional[datetime] = None
+    cancelled_at: Optional[datetime] = None
 
 class PrivacySettings(BaseModel):
     blur_face_in_photos: bool = True

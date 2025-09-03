@@ -10,6 +10,7 @@ from bson import ObjectId
 from ...models.insights import DailyInsights, InsightContent, UserInsightPreferences
 from ...models.user import UserModel
 from ...services.insights_service import get_insights_service
+from ...services.subscription_service import SubscriptionService
 from ...api.deps import get_current_user
 from ...database import db
 from pydantic import BaseModel
@@ -41,7 +42,18 @@ async def get_daily_insights(current_user: UserModel = Depends(get_current_user)
     """
     Get daily personalized insights for the current user.
     Generates new insights if none exist for today.
+    Premium feature only.
     """
+    # Check if user has premium access
+    if not SubscriptionService.can_access_insights(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": "Daily insights are a premium feature",
+                "upgrade_prompt": "Upgrade to Premium to receive personalized daily skincare insights!"
+            }
+        )
+    
     try:
         import logging
         logger = logging.getLogger(__name__)

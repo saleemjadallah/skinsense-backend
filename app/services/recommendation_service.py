@@ -14,6 +14,7 @@ from app.models.skin_analysis import SkinAnalysisModel
 # from app.services.haut_ai_service import haut_ai_service  # Using ORBO instead
 from app.services.openai_service import openai_service
 from app.services.perplexity_service import perplexity_service
+from app.services.subscription_service import SubscriptionService
 
 logger = logging.getLogger(__name__)
 
@@ -63,13 +64,16 @@ class UnifiedRecommendationService:
                 self.openai.generate_skin_feedback(skin_analysis, user)
             )
             
+            # Get recommendation limit based on subscription
+            recommendation_limit = SubscriptionService.get_recommendation_limit(user)
+            
             product_recommendations_task = asyncio.create_task(
                 self.perplexity.get_personalized_recommendations(
                     user=user,
                     skin_analysis=skin_analysis,
                     user_location=user_location,
                     db=db,
-                    limit=5
+                    limit=recommendation_limit
                 )
             )
             
@@ -92,12 +96,15 @@ class UnifiedRecommendationService:
                 )
             
             # Step 5: Compile complete results
+            is_premium = SubscriptionService.is_premium(user)
             complete_results = {
                 "analysis_id": str(analysis_id) if analysis_id else None,
                 "skin_analysis": skin_analysis,
                 "ai_feedback": ai_feedback,
                 "progress_insights": progress_insights,
                 "product_recommendations": product_recommendations,
+                "subscription_tier": "premium" if is_premium else "free",
+                "recommendation_limit": recommendation_limit,
                 "analysis_summary": self._generate_analysis_summary(skin_analysis),
                 "generated_at": datetime.utcnow().isoformat(),
                 "pipeline_version": "2.0"

@@ -15,6 +15,7 @@ from app.schemas.community import (
     LikeResponse, SaveResponse, PostStats, UserProfile
 )
 from app.services.s3_service import s3_service
+from app.services.subscription_service import SubscriptionService
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +70,17 @@ async def create_post(
     db: Database = Depends(get_database)
 ):
     """Create a new community post"""
+    
+    # Check if user can post (premium only)
+    if not SubscriptionService.can_post_community(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": "Community posting is a premium feature",
+                "upgrade_prompt": "Upgrade to Premium to share your skincare journey and connect with the community!"
+            }
+        )
+    
     try:
         # Create post document
         post = CommunityPost(
@@ -443,6 +455,17 @@ async def create_comment(
     db: Database = Depends(get_database)
 ):
     """Create a comment on a post"""
+    
+    # Check if user can comment (premium only)
+    if not SubscriptionService.can_post_community(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": "Commenting is a premium feature",
+                "upgrade_prompt": "Upgrade to Premium to engage with the community!"
+            }
+        )
+    
     try:
         # Verify post exists
         post = db.community_posts.find_one({"_id": ObjectId(post_id), "is_active": True})

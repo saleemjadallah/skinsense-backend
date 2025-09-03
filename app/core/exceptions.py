@@ -28,6 +28,10 @@ class ServiceUnavailableError(SkinSenseException):
     """Raised when external service is unavailable"""
     pass
 
+class SubscriptionLimitExceeded(SkinSenseException):
+    """Raised when user exceeds subscription limits"""
+    pass
+
 # Common HTTP exceptions
 def not_found(detail: str = "Resource not found"):
     return HTTPException(

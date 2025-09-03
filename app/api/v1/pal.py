@@ -11,6 +11,8 @@ import logging
 from ..deps import get_current_active_user
 from ...models.user import UserModel
 from ...services.pal_service import PalService
+from ...services.subscription_service import SubscriptionService
+from ...database import get_database
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +37,8 @@ class ConversationStarter(BaseModel):
 @router.post("/chat", response_model=ChatResponse)
 async def chat_with_pal(
     message: ChatMessage,
-    current_user: UserModel = Depends(get_current_active_user)
+    current_user: UserModel = Depends(get_current_active_user),
+    db = Depends(get_database)
 ) -> ChatResponse:
     """
     Send a message to Pal and get a response
@@ -50,6 +53,27 @@ async def chat_with_pal(
     """
     try:
         logger.info(f"User {current_user.id} sending message to Pal")
+        
+        # Check Pal AI limits for free users
+        pal_status = SubscriptionService.check_pal_limit(current_user)
+        if not pal_status["allowed"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "message": "Daily Pal AI question limit reached",
+                    "remaining_questions": 0,
+                    "reset_time": pal_status.get("reset_time").isoformat() if pal_status.get("reset_time") else None,
+                    "upgrade_prompt": "Upgrade to Premium for unlimited Pal AI conversations!"
+                }
+            )
+        
+        # Increment Pal usage
+        SubscriptionService.increment_pal_usage(current_user)
+        # Update user in database
+        db.users.update_one(
+            {"_id": current_user.id},
+            {"$set": {"subscription": current_user.subscription.dict()}}
+        )
         
         # Initialize service
         pal_service = PalService()
