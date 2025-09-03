@@ -1,7 +1,8 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Literal, Any
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
+from app.utils.datetime_util import DateTimeUtil
 
 
 class WeeklyMilestone(BaseModel):
@@ -59,11 +60,11 @@ class PlanModel(BaseModel):
     # Predicted improvements for each skin parameter
     
     # Timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=DateTimeUtil.now)
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
-    last_activity: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    last_activity: datetime = Field(default_factory=DateTimeUtil.now)
+    updated_at: datetime = Field(default_factory=DateTimeUtil.now)
     
     # Additional metadata
     completion_rate: float = Field(default=0.0)  # Overall completion percentage
@@ -120,7 +121,7 @@ class PlanProgress(BaseModel):
     user_notes: Optional[str] = None
     
     # Timestamps
-    recorded_at: datetime = Field(default_factory=datetime.utcnow)
+    recorded_at: datetime = Field(default_factory=DateTimeUtil.now)
     week_start_date: datetime
     week_end_date: datetime
 
@@ -154,7 +155,7 @@ class PlanTemplate(BaseModel):
     success_criteria: List[str]
     
     # Metadata
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=DateTimeUtil.now)
     usage_count: int = Field(default=0)
     average_completion_rate: float = Field(default=0.0)
     user_rating: float = Field(default=0.0)

@@ -1,7 +1,7 @@
 import logging
 import json
 from typing import List, Dict, Any, Optional, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from bson import ObjectId
 from pymongo.database import Database
 
@@ -14,6 +14,8 @@ from app.database import get_database
 from app.services.openai_service import OpenAIService
 from app.services.routine_service import RoutineService
 from app.services.goal_service import GoalService
+from app.utils.database_manager import DatabaseManager
+from app.utils.datetime_util import DateTimeUtil
 
 logger = logging.getLogger(__name__)
 
@@ -22,20 +24,18 @@ class PlanService:
     """Service for managing personalized skincare plans"""
     
     def __init__(self):
-        try:
-            self.db = get_database()  # PyMongo sync database
-            if self.db is None:
-                logger.error("Database connection is None, attempting to reconnect")
-                from app.database import connect_to_mongo
-                connect_to_mongo()
-                self.db = get_database()
-        except Exception as e:
-            logger.error(f"Failed to initialize database in PlanService: {e}")
-            self.db = None
+        # Use DatabaseManager for consistent connection handling
+        self.db = None
+        self._ensure_db_connection()
             
         self.openai_service = OpenAIService()
         self.routine_service = RoutineService()
         self.goal_service = GoalService()
+    
+    def _ensure_db_connection(self):
+        """Ensure database connection is established"""
+        if self.db is None:
+            self.db = DatabaseManager.get_database()
         
         # Plan type configurations
         self.plan_configs = {
@@ -206,7 +206,7 @@ class PlanService:
                 personalization_data=personalization_data,
                 weekly_milestones=milestones,
                 effectiveness_predictions=effectiveness_predictions,
-                started_at=datetime.utcnow()
+                started_at=DateTimeUtil.now()
             )
             
             # Save to database
@@ -368,13 +368,7 @@ class PlanService:
     def get_user_plans(self, user_id: str, status: Optional[str] = None) -> List[Dict]:
         """Get all plans for a user with optimized performance"""
         
-        if self.db is None:
-            logger.error("Database connection is None in get_user_plans")
-            from app.database import connect_to_mongo, get_database
-            connect_to_mongo()
-            self.db = get_database()
-            if self.db is None:
-                raise RuntimeError("Failed to establish database connection")
+        self._ensure_db_connection()
         
         try:
             query = {"user_id": ObjectId(user_id)}
@@ -422,7 +416,7 @@ class PlanService:
                     "routine_count": routine_count,
                     "goal_count": goal_count,
                     "target_concerns": plan.get("target_concerns", []),
-                    "created_at": plan.get("created_at", datetime.utcnow()).isoformat(),
+                    "created_at": DateTimeUtil.format_iso(plan.get("created_at", DateTimeUtil.now())),
                     "started_at": plan.get("started_at").isoformat() if plan.get("started_at") else None
                 })
             
@@ -435,13 +429,7 @@ class PlanService:
     def get_plan_details(self, plan_id: str) -> Dict[str, Any]:
         """Get detailed plan information with optimized queries"""
         
-        if self.db is None:
-            logger.error("Database connection is None in get_plan_details")
-            from app.database import connect_to_mongo, get_database
-            connect_to_mongo()
-            self.db = get_database()
-            if self.db is None:
-                raise RuntimeError("Failed to establish database connection")
+        self._ensure_db_connection()
         
         try:
             # Validate plan_id first
@@ -491,9 +479,8 @@ class PlanService:
             latest_progress = plan.get("latest_progress", [{}])[0] if plan.get("latest_progress") else None
             
             # Check if today is marked complete and count weekly progress in parallel
-            today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-            week_start = today - timedelta(days=today.weekday())
-            week_end = week_start + timedelta(days=6)
+            today = DateTimeUtil.today_start()
+            week_start, week_end = DateTimeUtil.current_week_range()
             
             # Use aggregation for daily progress stats
             daily_progress_pipeline = [
@@ -550,7 +537,7 @@ class PlanService:
             "status": plan.get("status", "active"),
             "current_week": plan.get("current_week", 1),
             "duration_weeks": plan.get("duration_weeks", 4),
-            "started_at": plan.get("started_at", plan.get("created_at", datetime.utcnow())).isoformat(),
+            "started_at": DateTimeUtil.format_iso(plan.get("started_at", plan.get("created_at", DateTimeUtil.now()))),
             "target_concerns": plan.get("target_concerns", []),
             "personalization_data": plan.get("personalization_data", {}),
             "current_milestone": next(
@@ -617,7 +604,7 @@ class PlanService:
         )
         
         # Check if today is marked complete
-        today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today = DateTimeUtil.today_start()
         today_progress = self.db.plan_daily_progress.find_one({
             "plan_id": ObjectId(plan_id),
             "date": today
@@ -652,7 +639,7 @@ class PlanService:
             "status": plan.get("status", "active"),
             "current_week": plan.get("current_week", 1),
             "duration_weeks": plan.get("duration_weeks", 4),
-            "started_at": plan.get("started_at", plan.get("created_at", datetime.utcnow())).isoformat(),
+            "started_at": DateTimeUtil.format_iso(plan.get("started_at", plan.get("created_at", DateTimeUtil.now()))),
             "target_concerns": plan.get("target_concerns", []),
             "personalization_data": plan.get("personalization_data", {}),
             "current_milestone": next(
@@ -700,8 +687,7 @@ class PlanService:
             return {}
         
         # Calculate week date range
-        week_start = datetime.utcnow() - timedelta(days=datetime.utcnow().weekday())
-        week_end = week_start + timedelta(days=6)
+        week_start, week_end = DateTimeUtil.current_week_range()
         
         # Count routine completions this week
         routine_completions = self.db.routine_completions.count_documents({
@@ -716,7 +702,7 @@ class PlanService:
             "routines_completed": routine_completions,
             "routines_expected": expected_completions,
             "completion_rate": (routine_completions / expected_completions * 100) if expected_completions > 0 else 0,
-            "days_remaining": (week_end - datetime.utcnow()).days
+            "days_remaining": DateTimeUtil.days_until(week_end)
         }
     
     def update_plan_progress(
@@ -741,8 +727,8 @@ class PlanService:
             milestone_achieved=progress_data.get("milestone_achieved", False),
             user_mood=progress_data.get("user_mood"),
             user_notes=progress_data.get("user_notes"),
-            week_start_date=datetime.utcnow() - timedelta(days=datetime.utcnow().weekday()),
-            week_end_date=datetime.utcnow() + timedelta(days=6 - datetime.utcnow().weekday())
+            week_start_date=DateTimeUtil.current_week_range()[0],
+            week_end_date=DateTimeUtil.current_week_range()[1]
         )
         
         # Save progress
@@ -756,7 +742,7 @@ class PlanService:
                 {
                     "$set": {
                         "current_week": min(week_number + 1, plan["duration_weeks"]),
-                        "last_activity": datetime.utcnow()
+                        "last_activity": DateTimeUtil.now()
                     }
                 }
             )
@@ -771,7 +757,7 @@ class PlanService:
             raise ValueError("Plan not found")
         
         # Track daily completion - use datetime not date for MongoDB
-        today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        today = DateTimeUtil.today_start()
         
         # Create or update daily progress record
         daily_progress = {
@@ -779,7 +765,7 @@ class PlanService:
             "user_id": plan["user_id"],
             "date": today,
             "completed": True,
-            "completed_at": datetime.utcnow(),
+            "completed_at": DateTimeUtil.now(),
             "week_number": plan.get("current_week", 1)
         }
         
@@ -808,7 +794,7 @@ class PlanService:
             {"_id": ObjectId(plan_id)},
             {
                 "$set": {
-                    "last_activity": datetime.utcnow(),
+                    "last_activity": DateTimeUtil.now(),
                     "days_completed_this_week": completed_days
                 }
             }
@@ -838,8 +824,8 @@ class PlanService:
                 {
                     "$set": {
                         "status": "completed",
-                        "completed_at": datetime.utcnow(),
-                        "last_activity": datetime.utcnow()
+                        "completed_at": DateTimeUtil.now(),
+                        "last_activity": DateTimeUtil.now()
                     }
                 }
             )
