@@ -2,12 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install curl for health checks and other dependencies
+# Install curl for health checks and minimal dependencies
+# Note: Removed problematic packages that aren't actually needed
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    libgl1 \
-    libglib2.0-0 \
-    libzbar0 \
     ca-certificates \
     curl \
     && apt-get clean \
