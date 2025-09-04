@@ -10,7 +10,7 @@ import re
 
 from app.core.config import settings
 from app.models.user import UserModel
-from app.services.affiliate_service import get_affiliate_service
+# from app.services.affiliate_service import get_affiliate_service  # Removed - keeping it simple
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ class PerplexityRecommendationService:
         
         try:
             # Initialize affiliate service
-            affiliate_service = get_affiliate_service(db)
+            # affiliate_service = get_affiliate_service(db)  # Removed - keeping it simple
             
             # Step 1: Check user's cached favorites first
             cached_recommendations = await self._get_cached_recommendations(
@@ -135,35 +135,32 @@ class PerplexityRecommendationService:
                     "location": user_location
                 }
             
-            # Step 4: Add affiliate links to all recommendations
+            # Step 4: Enhance products with URLs and images (simplified, no affiliate)
             for product in all_recommendations:
-                # Generate affiliate links for each product
-                affiliate_data = affiliate_service.generate_affiliate_link(
-                    product,
-                    user.id,
-                    skin_analysis.get('_id')
-                )
-                
-                # Add affiliate data to product
-                product['affiliate_link'] = affiliate_data['affiliate_link']
-                product['tracking_link'] = affiliate_data['tracking_link']
-                
                 # Generate image URL if not present
                 if not product.get('image_url'):
                     product['image_url'] = self._generate_product_image_url(product)
                 
-                # Ensure we have a working URL for Shop Now button
+                # Generate a simple product URL for Shop Now button
+                if not product.get('product_url') and not product.get('affiliate_link'):
+                    product['product_url'] = self._generate_product_url(product)
+                
+                # For backward compatibility, also set affiliate_link to product_url
                 if not product.get('affiliate_link'):
-                    product['affiliate_link'] = self._generate_product_url(product)
-                product['tracking_id'] = affiliate_data.get('tracking_id')
-                product['estimated_commission'] = affiliate_data.get('estimated_commission')
+                    product['affiliate_link'] = product.get('product_url', self._generate_product_url(product))
                 
                 # Ensure retailer is set
                 if not product.get('retailer') and product.get('availability'):
                     # Try to detect retailer from availability data
-                    online_stores = product['availability'].get('online_stores', [])
-                    if online_stores:
-                        product['retailer'] = online_stores[0].lower().replace('.com', '')
+                    online_stores = product.get('availability', {}).get('online_stores', [])
+                    local_stores = product.get('availability', {}).get('local_stores', [])
+                    
+                    if local_stores:
+                        product['retailer'] = local_stores[0]
+                    elif online_stores:
+                        product['retailer'] = online_stores[0].replace('.com', '')
+                    else:
+                        product['retailer'] = 'Online'
             
             # Step 5: Build complete response
             return {
