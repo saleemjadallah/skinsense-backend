@@ -136,7 +136,7 @@ class PerplexityRecommendationService:
                 }
             
             # Step 4: Enhance products with URLs and images (simplified, no affiliate)
-            for product in all_recommendations:
+            for i, product in enumerate(all_recommendations):
                 # Generate image URL if not present
                 if not product.get('image_url'):
                     product['image_url'] = self._generate_product_image_url(product)
@@ -161,6 +161,16 @@ class PerplexityRecommendationService:
                         product['retailer'] = online_stores[0].replace('.com', '')
                     else:
                         product['retailer'] = 'Online'
+                
+                # Debug logging for first product
+                if i == 0:
+                    logger.info(f"[PRODUCT DEBUG] First product after enhancement:")
+                    logger.info(f"  - name: {product.get('name')}")
+                    logger.info(f"  - brand: {product.get('brand')}")
+                    logger.info(f"  - retailer: {product.get('retailer')}")
+                    logger.info(f"  - product_url: {product.get('product_url')}")
+                    logger.info(f"  - affiliate_link: {product.get('affiliate_link')}")
+                    logger.info(f"  - image_url: {product.get('image_url', '')[:50]}...")
             
             # Step 5: Build complete response
             return {
