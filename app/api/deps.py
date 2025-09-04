@@ -39,7 +39,8 @@ async def get_current_user(
     if user_data is None:
         raise credentials_exception
     
-    if not user_data.get("is_active", False):
+    # Default to True if is_active is not set (for backward compatibility)
+    if not user_data.get("is_active", True):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Inactive user"
