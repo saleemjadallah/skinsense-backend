@@ -117,13 +117,23 @@ class PerplexityRecommendationService:
             
             all_recommendations = validated_recommendations
             
-            # If no recommendations from either source, use fallback
+            # If no recommendations from either source, return empty
             if not all_recommendations:
-                logger.warning("No recommendations from cache or Perplexity API - using fallback products")
-                # Use fallback products to ensure something is always shown
-                fallback_products = self._create_fallback_products(skin_analysis, user_location)
-                all_recommendations = fallback_products
-                logger.info(f"Generated {len(fallback_products)} fallback products")
+                logger.error("CRITICAL: No recommendations from cache or Perplexity API")
+                # Return empty list to test actual API functionality
+                return {
+                    "recommendations": [],
+                    "routine_suggestions": {},
+                    "shopping_list": {},
+                    "source_mix": {
+                        "cached_favorites": len(cached_recommendations),
+                        "fresh_search": len(fresh_recommendations),
+                        "total": 0
+                    },
+                    "error": "No product recommendations available. Please try again later.",
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "location": user_location
+                }
             
             # Step 4: Add affiliate links to all recommendations
             for product in all_recommendations:
