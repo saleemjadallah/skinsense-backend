@@ -18,7 +18,7 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from app.database import db
+from app.database import get_database
 from app.services.insights_service import get_insights_service
 from app.core.config import settings
 import logging
@@ -38,6 +38,9 @@ async def generate_insights_for_all_users():
     """Generate daily insights for all active users"""
     try:
         logger.info("Starting daily insights generation job")
+        
+        # Get database instance
+        db = get_database()
         
         # Get all active users who haven't opted out
         users = db.users.find({

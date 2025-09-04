@@ -1,0 +1,18 @@
+# SkinSense AI Cron Jobs Configuration - Fixed Version
+# 
+# Format: minute hour day-of-month month day-of-week command
+# 
+# This file should be installed on the production server using:
+# crontab /path/to/crontab_fixed
+
+# Generate daily insights for all users at 6 AM UTC (run inside docker)
+0 6 * * * docker exec skinsense_backend python /app/app/scripts/generate_daily_insights.py >> /home/ubuntu/skinsense-backend/logs/insights_cron.log 2>&1
+
+# Clean up old insights (run weekly on Sunday at 3 AM) (run inside docker)
+0 3 * * 0 docker exec skinsense_backend python -c "from app.database import get_database; from datetime import datetime, timedelta; db = get_database(); deleted = db.daily_insights.delete_many({'created_at': {'$lt': datetime.utcnow() - timedelta(days=30)}}); print(f'Cleaned up {deleted.deleted_count} insights')" >> /home/ubuntu/skinsense-backend/logs/cleanup.log 2>&1
+
+# Health check for insights generation (every 12 hours) (run inside docker)
+0 */12 * * * docker exec skinsense_backend python -c "from app.database import get_database; from datetime import datetime; db = get_database(); count = db.daily_insights.count_documents({'created_at': {'$gte': datetime.utcnow().replace(hour=0, minute=0, second=0)}}); print(f'Generated insights today: {count}')" >> /home/ubuntu/skinsense-backend/logs/health_check.log 2>&1
+
+# Generate smart reminders daily at 10:00 UTC for active users (run inside docker) - if script exists
+# 0 10 * * * docker exec skinsense_backend python /app/app/scripts/generate_daily_reminders.py >> /home/ubuntu/skinsense-backend/logs/reminders_cron.log 2>&1
