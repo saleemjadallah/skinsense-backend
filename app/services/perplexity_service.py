@@ -983,8 +983,8 @@ IMPORTANT GUIDELINES:
             "usageInstructions": raw_product.get('usage_instructions') or self._generate_usage_instructions(raw_product),
             "keyIngredients": raw_product.get('key_ingredients') or self._extract_key_ingredients(raw_product),
             "affiliateLink": raw_product.get('affiliate_link'),
-            "productUrl": raw_product.get('affiliate_link'),  # Also set as productUrl for Shop Now button
-            "trackingLink": raw_product.get('affiliate_link'),  # Also set as trackingLink
+            "productUrl": self._generate_product_url(raw_product),  # Generate URL for Shop Now button
+            "trackingLink": raw_product.get('tracking_link'),  # Use tracking link if available
             "retailer": raw_product.get('retailer') or self._extract_retailer_from_url(raw_product.get('affiliate_link')),
             "source": "perplexity_search",
             "searchTimestamp": datetime.now(timezone.utc).isoformat(),
@@ -1199,6 +1199,46 @@ IMPORTANT GUIDELINES:
         return fallback_products[:3]
     
     # Helper methods for parsing and formatting
+    def _generate_product_url(self, product: Dict[str, Any]) -> str:
+        """
+        Generate a product URL for Shop Now button
+        Priority: affiliate_link > tracking_link > retailer website > search URL
+        """
+        # Check if we have an affiliate link
+        if product.get('affiliate_link'):
+            return product['affiliate_link']
+        
+        # Check if we have a tracking link
+        if product.get('tracking_link'):
+            return product['tracking_link']
+        
+        # Generate URL based on retailer
+        retailer = product.get('retailer', '').lower()
+        product_name = product.get('name', '').replace(' ', '+')
+        brand = product.get('brand', '').replace(' ', '+')
+        
+        if 'amazon' in retailer:
+            return f"https://www.amazon.com/s?k={brand}+{product_name}"
+        elif 'sephora' in retailer:
+            return f"https://www.sephora.com/search?keyword={brand}%20{product_name}"
+        elif 'ulta' in retailer:
+            return f"https://www.ulta.com/search?q={brand}+{product_name}"
+        elif 'target' in retailer:
+            return f"https://www.target.com/s?searchTerm={brand}+{product_name}"
+        elif 'dermalogica' in retailer:
+            return "https://www.dermalogica.com"
+        elif 'ordinary' in retailer or 'deciem' in retailer:
+            return "https://theordinary.com"
+        elif 'cerave' in retailer:
+            return f"https://www.cerave.com/search?q={product_name}"
+        elif retailer:
+            # Try to construct a URL from retailer name
+            retailer_clean = retailer.replace(' ', '').replace('.com', '')
+            return f"https://www.{retailer_clean}.com"
+        else:
+            # Default to Google search
+            return f"https://www.google.com/search?q={brand}+{product_name}+buy"
+    
     def _extract_brand(self, product_name: str) -> str:
         """Extract brand name from product text"""
         common_brands = ['CeraVe', 'Neutrogena', 'Olay', 'The Ordinary', 'Paula\'s Choice', 
