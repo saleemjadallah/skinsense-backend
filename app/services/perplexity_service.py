@@ -147,6 +147,14 @@ class PerplexityRecommendationService:
                 # Add affiliate data to product
                 product['affiliate_link'] = affiliate_data['affiliate_link']
                 product['tracking_link'] = affiliate_data['tracking_link']
+                
+                # Generate image URL if not present
+                if not product.get('image_url'):
+                    product['image_url'] = self._generate_product_image_url(product)
+                
+                # Ensure we have a working URL for Shop Now button
+                if not product.get('affiliate_link'):
+                    product['affiliate_link'] = self._generate_product_url(product)
                 product['tracking_id'] = affiliate_data.get('tracking_id')
                 product['estimated_commission'] = affiliate_data.get('estimated_commission')
                 
@@ -1199,6 +1207,23 @@ IMPORTANT GUIDELINES:
         return fallback_products[:3]
     
     # Helper methods for parsing and formatting
+    def _generate_product_image_url(self, product: Dict[str, Any]) -> str:
+        """
+        Generate a placeholder product image URL based on brand/category
+        Uses Lorem Picsum for placeholder images with deterministic seeds
+        """
+        # If we already have an image URL, return it
+        if product.get('image_url'):
+            return product['image_url']
+        
+        # Generate a deterministic seed based on product name + brand
+        import hashlib
+        seed_text = f"{product.get('brand', '')}_{product.get('name', '')}"
+        seed = int(hashlib.md5(seed_text.encode()).hexdigest()[:6], 16) % 1000
+        
+        # Use Lorem Picsum with seed for consistent images
+        return f"https://picsum.photos/seed/{seed}/400/400"
+    
     def _generate_product_url(self, product: Dict[str, Any]) -> str:
         """
         Generate a product URL for Shop Now button
