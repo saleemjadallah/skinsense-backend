@@ -148,7 +148,7 @@ class AffiliateService:
         )
         
         # Create internal tracking link that redirects to affiliate link
-        tracking_link = f"{settings.API_BASE_URL}/api/v1/track/product/{tracking_id}"
+        tracking_link = f"{settings.BASE_URL}/api/v1/track/product/{tracking_id}"
         
         return {
             'affiliate_link': affiliate_link,
