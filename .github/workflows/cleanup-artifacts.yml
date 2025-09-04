@@ -1,0 +1,82 @@
+name: Cleanup Deployment Artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "yes" to confirm cleanup'
+        required: true
+        default: 'no'
+  schedule:
+    # Run cleanup every Sunday at 2 AM UTC
+    - cron: '0 2 * * 0'
+
+jobs:
+  cleanup:
+    name: Clean EC2 Deployment Artifacts
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Validate confirmation
+      if: github.event_name == 'workflow_dispatch'
+      run: |
+        if [ "${{ github.event.inputs.confirm }}" != "yes" ]; then
+          echo "❌ Cleanup cancelled - confirmation not received"
+          exit 1
+        fi
+        echo "✅ Cleanup confirmed"
+    
+    - name: Setup SSH key
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.EC2_KEY }}" | base64 -d > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        
+        # Add EC2 host to known hosts
+        ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+    
+    - name: Copy cleanup script to server
+      run: |
+        echo "📤 Uploading cleanup script to server..."
+        scp -i ~/.ssh/deploy_key \
+          backend/scripts/cleanup-deployment-artifacts.sh \
+          ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/cleanup-artifacts.sh
+    
+    - name: Execute cleanup on EC2
+      run: |
+        echo "🧹 Starting artifact cleanup on EC2..."
+        ssh -i ~/.ssh/deploy_key \
+          ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+          "chmod +x /tmp/cleanup-artifacts.sh && /tmp/cleanup-artifacts.sh"
+    
+    - name: Check application health
+      run: |
+        echo "🏥 Checking application health..."
+        sleep 5
+        
+        # Check if the backend is still running
+        response=$(curl -s -o /dev/null -w "%{http_code}" http://${{ secrets.EC2_HOST }}/health)
+        
+        if [ "$response" = "200" ]; then
+          echo "✅ Application is healthy after cleanup"
+        else
+          echo "⚠️ Warning: Health check returned status $response"
+          echo "This may be temporary - please check the application"
+        fi
+    
+    - name: Cleanup summary
+      if: success()
+      run: |
+        echo "✅ Deployment artifacts cleanup completed successfully!"
+        echo ""
+        echo "📊 Summary:"
+        echo "- Old deployment backups removed (kept 5 most recent)"
+        echo "- Docker unused images and volumes cleaned"
+        echo "- APT package cache cleared"
+        echo "- System logs rotated (kept last 7 days)"
+        echo "- Old kernel packages removed"
+        echo ""
+        echo "Check the job logs above for detailed space recovery information."

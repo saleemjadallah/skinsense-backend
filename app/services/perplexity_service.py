@@ -983,6 +983,27 @@ IMPORTANT GUIDELINES:
         current_price = raw_product.get('current_price')
         price_str = raw_product.get('price', '')
         
+        # Try to extract price from price string if current_price is not set
+        if not current_price and price_str and '$' in price_str:
+            price_match = re.search(r'\$([\d.]+)', price_str)
+            if price_match:
+                try:
+                    current_price = float(price_match.group(1))
+                except ValueError:
+                    pass
+        
+        # If still no price, try to parse from price_range
+        if not current_price and raw_product.get('price_range'):
+            price_range_str = raw_product.get('price_range', '')
+            if '$' in price_range_str:
+                # Try to get the first price from range
+                price_match = re.search(r'\$([\d.]+)', price_range_str)
+                if price_match:
+                    try:
+                        current_price = float(price_match.group(1))
+                    except ValueError:
+                        pass
+        
         # Format the product with all available data - ensure required fields are never null
         product_name = raw_product.get('name', 'Unknown Product')
         
@@ -1003,7 +1024,7 @@ IMPORTANT GUIDELINES:
             "description": description,
             "imageUrl": raw_product.get('image_url') or self._generate_product_image_url(raw_product),
             "currentPrice": current_price,
-            "priceRange": price_str or raw_product.get('price_range'),
+            "priceRange": price_str or raw_product.get('price_range') or "$15-30",  # Always provide a price range
             "availability": raw_product.get('availability') or {
                 "local_stores": self._extract_local_stores(raw_product.get('availability', [])),
                 "online_stores": self._extract_online_stores(raw_product.get('availability', []))
@@ -1035,7 +1056,7 @@ IMPORTANT GUIDELINES:
             cleaned['category'] = 'skincare'
         
         # Log the product for debugging
-        logger.info(f"[PERPLEXITY DEBUG] Formatted product: name={cleaned.get('name')}, category={cleaned.get('category')}, brand={cleaned.get('brand')}")
+        logger.info(f"[PERPLEXITY DEBUG] Formatted product: name={cleaned.get('name')}, currentPrice={cleaned.get('currentPrice')}, priceRange={cleaned.get('priceRange')}")
         
         return cleaned
     
