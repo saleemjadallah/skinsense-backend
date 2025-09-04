@@ -117,23 +117,13 @@ class PerplexityRecommendationService:
             
             all_recommendations = validated_recommendations
             
-            # If no recommendations from either source, return error
+            # If no recommendations from either source, use fallback
             if not all_recommendations:
-                logger.error("CRITICAL: No recommendations from cache or Perplexity API")
-                # Return empty with error message instead of fallback
-                return {
-                    "recommendations": [],
-                    "routine_suggestions": {},
-                    "shopping_list": {},
-                    "source_mix": {
-                        "cached_favorites": len(cached_recommendations),
-                        "fresh_search": len(fresh_recommendations),
-                        "total": 0
-                    },
-                    "error": "Failed to get product recommendations from Perplexity API",
-                    "generated_at": datetime.now(timezone.utc).isoformat(),
-                    "location": user_location
-                }
+                logger.warning("No recommendations from cache or Perplexity API - using fallback products")
+                # Use fallback products to ensure something is always shown
+                fallback_products = self._create_fallback_products(skin_analysis, user_location)
+                all_recommendations = fallback_products
+                logger.info(f"Generated {len(fallback_products)} fallback products")
             
             # Step 4: Add affiliate links to all recommendations
             for product in all_recommendations:
@@ -905,13 +895,25 @@ IMPORTANT GUIDELINES:
                         'local_stores': self._extract_stores_from_text(stores_text, local=True),
                         'online_stores': self._extract_stores_from_text(stores_text, local=False)
                     }
-                    # Also try to extract affiliate links
-                    if 'amazon' in stores_text.lower():
-                        product['affiliate_link'] = 'https://www.amazon.com/s?k=' + product.get('name', '').replace(' ', '+')
-                    elif 'sephora' in stores_text.lower():
-                        product['affiliate_link'] = 'https://www.sephora.com/search?keyword=' + product.get('name', '').replace(' ', '+')
-                    elif 'target' in stores_text.lower():
-                        product['affiliate_link'] = 'https://www.target.com/s?searchTerm=' + product.get('name', '').replace(' ', '+')
+                    # Generate better product search URLs if no direct link found
+                    if not product.get('affiliate_link'):
+                        product_name = product.get('name', '')
+                        brand = product.get('brand', '')
+                        search_query = f"{brand} {product_name}".strip().replace(' ', '+')
+                        
+                        if 'amazon' in stores_text.lower():
+                            product['affiliate_link'] = f'https://www.amazon.com/s?k={search_query}'
+                        elif 'sephora' in stores_text.lower():
+                            product['affiliate_link'] = f'https://www.sephora.com/search?keyword={search_query}'
+                        elif 'ulta' in stores_text.lower():
+                            product['affiliate_link'] = f'https://www.ulta.com/search?q={search_query}'
+                        elif 'target' in stores_text.lower():
+                            product['affiliate_link'] = f'https://www.target.com/s?searchTerm={search_query}'
+                        elif 'cvs' in stores_text.lower():
+                            product['affiliate_link'] = f'https://www.cvs.com/search?searchTerm={search_query}'
+                        else:
+                            # Default to Amazon search if no specific store mentioned
+                            product['affiliate_link'] = f'https://www.amazon.com/s?k={search_query}'
                 
                 if len(parts) > 6:  # Price
                     product['price_range'] = self._extract_price_range(parts[6])
