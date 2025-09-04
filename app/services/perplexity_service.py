@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 class PerplexityRecommendationService:
     """
     Service for generating personalized product recommendations using Perplexity AI
+    Updated: 2025-09-04 - Simplified URL generation, removed affiliate complexity
     
     ORBO Skin Analysis Metrics (10 metrics, each scored 0-100):
     1. overall_skin_health_score - Overall skin health and condition
