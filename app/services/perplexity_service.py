@@ -217,7 +217,7 @@ class PerplexityRecommendationService:
                         "Content-Type": "application/json"
                     },
                     json={
-                        "model": "sonar",  # Using Perplexity's lightweight search model
+                        "model": "sonar",  # Using Perplexity's search model (verified working)
                         "messages": [
                             {
                                 "role": "system",
