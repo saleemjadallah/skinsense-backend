@@ -192,7 +192,7 @@ class UnifiedRecommendationService:
                 # Create minimal analysis from user profile
                 skin_analysis = {
                     "skin_type": skin_type_override or user.profile.skin_type or "combination",
-                    "concerns": user.profile.concerns or ["hydration", "texture"],
+                    "concerns": user.profile.skin_concerns or ["hydration", "texture"],
                     "scores": {
                         "overall_skin_health": 7.5,
                         "hydration": 7.0,
