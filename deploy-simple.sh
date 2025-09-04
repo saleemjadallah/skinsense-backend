@@ -36,6 +36,11 @@ log "Cleaning up Docker resources..."
 docker container prune -f >/dev/null 2>&1 || true
 docker image prune -f >/dev/null 2>&1 || true
 
+# Clean up networks - remove conflicting networks
+log "Cleaning up Docker networks..."
+docker network rm skinsense-backend_skinsense_network 2>/dev/null || true
+docker network rm skinsense_network 2>/dev/null || true
+
 # Build and start fresh (force rebuild without cache)
 log "Building and starting containers (no cache)..."
 docker-compose -f docker-compose.yml build --no-cache
