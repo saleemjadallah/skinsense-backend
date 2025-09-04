@@ -139,16 +139,25 @@ class PerplexityRecommendationService:
             # Step 4: Enhance products with URLs and images (simplified, no affiliate)
             for i, product in enumerate(all_recommendations):
                 # Generate image URL if not present
-                if not product.get('image_url'):
-                    product['image_url'] = self._generate_product_image_url(product)
+                if not product.get('imageUrl') and not product.get('image_url'):
+                    product['imageUrl'] = self._generate_product_image_url(product)
                 
                 # Generate a simple product URL for Shop Now button
-                if not product.get('product_url') and not product.get('affiliate_link'):
-                    product['product_url'] = self._generate_product_url(product)
+                generated_url = self._generate_product_url(product)
                 
-                # For backward compatibility, also set affiliate_link to product_url
-                if not product.get('affiliate_link'):
-                    product['affiliate_link'] = product.get('product_url', self._generate_product_url(product))
+                # Set URLs in camelCase for Flutter frontend compatibility
+                if not product.get('productUrl'):
+                    product['productUrl'] = generated_url
+                
+                if not product.get('affiliateLink'):
+                    product['affiliateLink'] = generated_url
+                    
+                if not product.get('trackingLink'):
+                    product['trackingLink'] = generated_url
+                
+                # Also keep snake_case for backward compatibility
+                product['product_url'] = generated_url
+                product['affiliate_link'] = generated_url
                 
                 # Ensure retailer is set
                 if not product.get('retailer') and product.get('availability'):
@@ -169,9 +178,10 @@ class PerplexityRecommendationService:
                     logger.info(f"  - name: {product.get('name')}")
                     logger.info(f"  - brand: {product.get('brand')}")
                     logger.info(f"  - retailer: {product.get('retailer')}")
-                    logger.info(f"  - product_url: {product.get('product_url')}")
-                    logger.info(f"  - affiliate_link: {product.get('affiliate_link')}")
-                    logger.info(f"  - image_url: {product.get('image_url', '')[:50]}...")
+                    logger.info(f"  - productUrl: {product.get('productUrl')}")
+                    logger.info(f"  - affiliateLink: {product.get('affiliateLink')}")
+                    logger.info(f"  - trackingLink: {product.get('trackingLink')}")
+                    logger.info(f"  - imageUrl: {product.get('imageUrl', '')[:50]}...")
             
             # Step 5: Build complete response
             return {
@@ -982,12 +992,16 @@ IMPORTANT GUIDELINES:
             # If description contains URL, it's not a real description
             description = f"High-quality skincare product targeting specific skin concerns"
         
+        # Generate URL once
+        generated_url = self._generate_product_url(raw_product)
+        
         formatted = {
             "id": f"perplexity_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{hash(product_name) % 10000}",
             "name": product_name,
             "brand": raw_product.get('brand') or self._extract_brand(product_name) or 'Unknown Brand',
             "category": raw_product.get('category') or self._guess_category(product_name) or 'skincare',
             "description": description,
+            "imageUrl": raw_product.get('image_url') or self._generate_product_image_url(raw_product),
             "currentPrice": current_price,
             "priceRange": price_str or raw_product.get('price_range'),
             "availability": raw_product.get('availability') or {
@@ -998,9 +1012,10 @@ IMPORTANT GUIDELINES:
             "compatibilityScore": raw_product.get('compatibility_score') or self._estimate_compatibility_score(raw_product, skin_analysis),
             "usageInstructions": raw_product.get('usage_instructions') or self._generate_usage_instructions(raw_product),
             "keyIngredients": raw_product.get('key_ingredients') or self._extract_key_ingredients(raw_product),
-            "affiliateLink": raw_product.get('affiliate_link'),
-            "productUrl": self._generate_product_url(raw_product),  # Generate URL for Shop Now button
-            "trackingLink": raw_product.get('tracking_link'),  # Use tracking link if available
+            # Use camelCase for Flutter frontend compatibility
+            "affiliateLink": raw_product.get('affiliate_link') or generated_url,
+            "productUrl": generated_url,  
+            "trackingLink": raw_product.get('tracking_link') or generated_url,
             "retailer": raw_product.get('retailer') or self._extract_retailer_from_url(raw_product.get('affiliate_link')),
             "source": "perplexity_search",
             "searchTimestamp": datetime.now(timezone.utc).isoformat(),
