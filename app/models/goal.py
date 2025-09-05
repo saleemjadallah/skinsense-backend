@@ -78,18 +78,34 @@ class GoalModel(BaseModel):
     confidence_score: Optional[float] = None  # AI confidence in achievability
     
     def calculate_progress(self) -> float:
-        """Calculate progress percentage based on current value"""
+        """Calculate progress percentage based on current value or time elapsed"""
         if self.type == "parameter_improvement":
-            if self.baseline_value == self.target_value:
-                return 100.0
-            progress = (self.current_value - self.baseline_value) / (self.target_value - self.baseline_value) * 100
-            return max(0, min(100, progress))
+            # If we have actual measurements, use value-based progress
+            if self.current_value != self.baseline_value:
+                if self.baseline_value == self.target_value:
+                    return 100.0
+                progress = (self.current_value - self.baseline_value) / (self.target_value - self.baseline_value) * 100
+                return max(0, min(100, progress))
+            else:
+                # Fall back to time-based progress if no measurements yet
+                # This gives users a sense of progress even without new scans
+                days_elapsed = (datetime.utcnow() - self.start_date).days
+                time_progress = (days_elapsed / self.duration_days) * 100 if self.duration_days > 0 else 0
+                # Cap time-based progress at 50% to encourage actual measurements
+                return min(50, time_progress)
         elif self.type == "routine_adherence":
             # For routine goals, progress is based on days completed
             days_elapsed = (datetime.utcnow() - self.start_date).days
             return min(100, (days_elapsed / self.duration_days) * 100)
         else:
-            return self.progress_percentage
+            # For holistic or custom goals, check if we have time-based progress
+            if self.progress_percentage > 0:
+                return self.progress_percentage
+            else:
+                # Use time-based progress as fallback
+                days_elapsed = (datetime.utcnow() - self.start_date).days
+                time_progress = (days_elapsed / self.duration_days) * 100 if self.duration_days > 0 else 0
+                return min(100, time_progress)
     
     def get_days_remaining(self) -> int:
         """Calculate days remaining to target date"""
@@ -99,6 +115,23 @@ class GoalModel(BaseModel):
     def is_overdue(self) -> bool:
         """Check if goal is past target date"""
         return datetime.utcnow() > self.target_date and self.status == "active"
+    
+    def get_time_progress(self) -> float:
+        """Calculate time-based progress percentage"""
+        days_elapsed = (datetime.utcnow() - self.start_date).days
+        if self.duration_days > 0:
+            return min(100, (days_elapsed / self.duration_days) * 100)
+        return 0.0
+    
+    def get_value_progress(self) -> float:
+        """Calculate value-based progress percentage for parameter goals"""
+        if self.type == "parameter_improvement":
+            if self.baseline_value == self.target_value:
+                return 100.0
+            if self.current_value != self.baseline_value:
+                progress = (self.current_value - self.baseline_value) / (self.target_value - self.baseline_value) * 100
+                return max(0, min(100, progress))
+        return 0.0
 
 
 class GoalProgress(BaseModel):

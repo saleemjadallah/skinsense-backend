@@ -12,7 +12,7 @@ from bson import ObjectId
 # MongoDB connection
 MONGODB_URL = "mongodb+srv://support:olaabdel88@skinpal.h3jgomd.mongodb.net/?retryWrites=true&w=majority&appName=skinpal"
 client = MongoClient(MONGODB_URL)
-db = client.get_database()
+db = client["skinpal"]  # Specify the database name
 
 def check_user_insights(email: str):
     """Check insights data for a specific user"""
