@@ -44,11 +44,18 @@ class AchievementService:
     
     def initialize_user_achievements(self, user_id: str) -> List[Dict[str, Any]]:
         """Initialize all achievements for a new user"""
+        # Always convert to ObjectId for consistency
+        try:
+            user_oid = ObjectId(user_id)
+        except:
+            logger.error(f"Invalid user_id format: {user_id}")
+            raise ValueError(f"Invalid user_id format: {user_id}")
+        
         user_achievements = []
         
         for achievement_def in ACHIEVEMENT_DEFINITIONS:
             user_achievement = UserAchievement(
-                user_id=user_id,
+                user_id=user_oid,  # Use ObjectId
                 achievement_id=achievement_def.achievement_id,
                 progress=0.0,
                 is_unlocked=False,
@@ -59,7 +66,7 @@ class AchievementService:
             # Insert or update
             self.achievements_collection.update_one(
                 {
-                    "user_id": user_id,
+                    "user_id": user_oid,  # Use ObjectId
                     "achievement_id": achievement_def.achievement_id
                 },
                 {"$setOnInsert": user_achievement.dict()},
@@ -75,8 +82,15 @@ class AchievementService:
     
     def get_user_achievements(self, user_id: str) -> List[Dict[str, Any]]:
         """Get all achievements for a user with their progress"""
+        # Always convert to ObjectId for consistency
+        try:
+            user_oid = ObjectId(user_id)
+        except:
+            logger.error(f"Invalid user_id format: {user_id}")
+            raise ValueError(f"Invalid user_id format: {user_id}")
+        
         # Get user's achievement progress
-        user_progress = list(self.achievements_collection.find({"user_id": user_id}))
+        user_progress = list(self.achievements_collection.find({"user_id": user_oid}))
         
         # If no achievements, initialize them
         if not user_progress:
@@ -99,7 +113,7 @@ class AchievementService:
             else:
                 # User doesn't have this achievement yet, create it
                 new_achievement = UserAchievement(
-                    user_id=user_id,
+                    user_id=user_oid,  # Use ObjectId
                     achievement_id=achievement_def.achievement_id,
                     progress=0.0,
                     is_unlocked=False,
@@ -121,6 +135,13 @@ class AchievementService:
         progress_data: Optional[Dict[str, Any]] = None
     ) -> Optional[Dict[str, Any]]:
         """Update achievement progress for a user"""
+        # Always convert to ObjectId for consistency
+        try:
+            user_oid = ObjectId(user_id)
+        except:
+            logger.error(f"Invalid user_id format: {user_id}")
+            raise ValueError(f"Invalid user_id format: {user_id}")
+        
         # Validate achievement exists
         achievement_def = get_achievement_definition(achievement_id)
         if not achievement_def:
@@ -150,7 +171,7 @@ class AchievementService:
             update_data["$set"]["progress_data"] = progress_data
         
         result = self.achievements_collection.find_one_and_update(
-            {"user_id": user_id, "achievement_id": achievement_id},
+            {"user_id": user_oid, "achievement_id": achievement_id},  # Use ObjectId
             update_data,
             upsert=True,
             return_document=True
@@ -168,9 +189,16 @@ class AchievementService:
     
     def track_user_action(self, user_id: str, action: AchievementAction) -> List[Dict[str, Any]]:
         """Track a user action and update related achievements"""
+        # Always convert to ObjectId for consistency
+        try:
+            user_oid = ObjectId(user_id)
+        except:
+            logger.error(f"Invalid user_id format: {user_id}")
+            raise ValueError(f"Invalid user_id format: {user_id}")
+        
         # Store the action
         self.achievement_actions_collection.insert_one({
-            "user_id": user_id,
+            "user_id": user_oid,  # Use ObjectId
             **action.dict()
         })
         
@@ -184,14 +212,9 @@ class AchievementService:
             db = get_database()
             from bson import ObjectId
             
-            # Convert user_id to ObjectId if it's a string
-            try:
-                user_obj_id = ObjectId(user_id)
-            except:
-                user_obj_id = user_id
-                
+            # user_oid is already converted at the beginning of the function
             analysis_count = db.skin_analyses.count_documents({
-                "user_id": user_obj_id
+                "user_id": user_oid
             })
             
             logger.info(f"User {user_id} has {analysis_count} total analyses")
@@ -238,7 +261,7 @@ class AchievementService:
         elif action.action_type == "goal_created":
             # First goal achievement
             goal_count = self.achievement_actions_collection.count_documents({
-                "user_id": user_id,
+                "user_id": user_oid,  # Use ObjectId
                 "action_type": "goal_created"
             })
             

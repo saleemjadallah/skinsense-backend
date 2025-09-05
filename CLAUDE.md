@@ -27,10 +27,30 @@ Python FastAPI backend with MongoDB, Redis caching, and AI service integrations.
 
 ## Database Schema
 
+### CRITICAL: ObjectId Usage
+```python
+# ALWAYS convert user_id to ObjectId before database operations
+from bson import ObjectId
+
+# ✅ CORRECT - Always use ObjectId for user_id
+user_oid = ObjectId(user_id_string)
+db.collection.find({"user_id": user_oid})
+
+# ❌ WRONG - Never store user_id as string
+db.collection.find({"user_id": "68b5c43842613c871ab5a236"})
+
+# Standard conversion pattern for all services:
+try:
+    user_oid = ObjectId(user_id)
+except:
+    raise ValueError(f"Invalid user_id format: {user_id}")
+```
+
 ### Core Collections
 ```python
 # Users
 {
+  "_id": ObjectId,  # Primary key
   "email": str,
   "subscription": {
     "tier": "free|premium",
@@ -40,7 +60,7 @@ Python FastAPI backend with MongoDB, Redis caching, and AI service integrations.
 
 # Skin Analyses  
 {
-  "user_id": ObjectId,
+  "user_id": ObjectId,  # ALWAYS ObjectId, never string
   "orbo_response": {"overall_skin_health_score": int, "hydration": int, ...},
   "ai_feedback": str,
   "image_url": str
@@ -48,11 +68,20 @@ Python FastAPI backend with MongoDB, Redis caching, and AI service integrations.
 
 # Goals
 {
-  "user_id": ObjectId,
+  "user_id": ObjectId,  # ALWAYS ObjectId, never string
   "title": str,
   "target_metric": str,
   "progress": float,
   "milestones": [{"percentage": int, "completed": bool}]
+}
+
+# User Achievements
+{
+  "user_id": ObjectId,  # ALWAYS ObjectId, never string
+  "achievement_id": str,
+  "is_unlocked": bool,
+  "progress": float,
+  "unlocked_at": datetime
 }
 ```
 
