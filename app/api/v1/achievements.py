@@ -31,8 +31,43 @@ async def get_user_achievements(
     try:
         # Auto-sync achievements from existing data if requested
         if sync:
-            sync_result = achievement_service.sync_achievements_from_existing_data(str(current_user.id))
-            logger.info(f"Auto-synced {sync_result['synced_achievements']} achievements for user {current_user.id}")
+            try:
+                sync_result = achievement_service.sync_achievements_from_existing_data(str(current_user.id))
+                logger.info(f"Auto-synced {sync_result['synced_achievements']} achievements for user {current_user.id}")
+                
+                # CRITICAL FIX: Force re-sync if First Glow is not unlocked but user has analyses
+                first_glow = achievement_service.achievements_collection.find_one({
+                    "user_id": {"$in": [str(current_user.id), current_user.id]},
+                    "achievement_id": "first_glow"
+                })
+                
+                if not first_glow or not first_glow.get("is_unlocked", False):
+                    # Force check if user has any analyses
+                    from ...database import get_database
+                    db = get_database()
+                    
+                    # Check both ObjectId and string formats
+                    from bson import ObjectId
+                    try:
+                        user_oid = ObjectId(str(current_user.id))
+                        analysis_count_oid = db.skin_analyses.count_documents({"user_id": user_oid})
+                        analysis_count_str = db.skin_analyses.count_documents({"user_id": str(current_user.id)})
+                        
+                        total_analyses = max(analysis_count_oid, analysis_count_str)
+                        
+                        if total_analyses > 0:
+                            logger.warning(f"User {current_user.id} has {total_analyses} analyses but First Glow not unlocked - forcing unlock")
+                            achievement_service.update_achievement_progress(
+                                str(current_user.id), 
+                                "first_glow", 
+                                1.0,
+                                {"retroactive_fix": True, "analysis_count": total_analyses}
+                            )
+                    except Exception as e:
+                        logger.error(f"Error in retroactive First Glow fix: {e}")
+                        
+            except Exception as e:
+                logger.error(f"Error in auto-sync: {e}")
         
         achievements = achievement_service.get_user_achievements(str(current_user.id))
         
@@ -324,3 +359,111 @@ async def track_routine_created(
         data={"has_morning": has_morning, "has_evening": has_evening}
     )
     return await track_achievement_action(action, current_user)
+
+
+@router.post("/fix-retroactive", response_model=Dict[str, Any])
+async def fix_retroactive_achievements(
+    current_user: UserModel = Depends(get_current_user),
+    force: bool = False
+):
+    """
+    CRITICAL BUG FIX: Retroactively fix achievements for users who have analyses
+    but achievements weren't properly tracked due to ObjectId/string user_id bugs.
+    """
+    try:
+        from ...database import get_database
+        from bson import ObjectId
+        
+        db = get_database()
+        user_id = str(current_user.id)
+        
+        logger.info(f"Starting retroactive achievement fix for user {user_id}")
+        
+        fixes_applied = []
+        
+        # Check both ObjectId and string formats for skin_analyses
+        try:
+            user_oid = ObjectId(user_id)
+            analysis_count_oid = db.skin_analyses.count_documents({"user_id": user_oid})
+            analysis_count_str = db.skin_analyses.count_documents({"user_id": user_id})
+            
+            total_analyses = max(analysis_count_oid, analysis_count_str)
+            format_used = "ObjectId" if analysis_count_oid > analysis_count_str else "string"
+            
+            logger.info(f"User {user_id} has {total_analyses} total analyses (format: {format_used})")
+            
+            # Fix First Glow if user has analyses but achievement not unlocked
+            first_glow = achievement_service.achievements_collection.find_one({
+                "user_id": {"$in": [user_id, user_oid]},
+                "achievement_id": "first_glow"
+            })
+            
+            if total_analyses > 0 and (not first_glow or not first_glow.get("is_unlocked", False)):
+                achievement_service.update_achievement_progress(
+                    user_id, 
+                    "first_glow", 
+                    1.0,
+                    {"retroactive_fix": True, "analysis_count": total_analyses, "format_used": format_used}
+                )
+                fixes_applied.append("first_glow")
+                logger.info(f"Fixed First Glow achievement for user {user_id}")
+            
+            # Fix Progress Pioneer if user has 10+ analyses
+            if total_analyses >= 10:
+                progress_pioneer = achievement_service.achievements_collection.find_one({
+                    "user_id": {"$in": [user_id, user_oid]},
+                    "achievement_id": "progress_pioneer"
+                })
+                
+                if not progress_pioneer or not progress_pioneer.get("is_unlocked", False):
+                    achievement_service.update_achievement_progress(
+                        user_id,
+                        "progress_pioneer",
+                        1.0,
+                        {"retroactive_fix": True, "analysis_count": total_analyses}
+                    )
+                    fixes_applied.append("progress_pioneer")
+                    logger.info(f"Fixed Progress Pioneer achievement for user {user_id}")
+            
+            # Check goals for Baseline Boss
+            goal_count_oid = db.goals.count_documents({"user_id": user_oid})
+            goal_count_str = db.goals.count_documents({"user_id": user_id})
+            total_goals = max(goal_count_oid, goal_count_str)
+            
+            if total_goals > 0:
+                baseline_boss = achievement_service.achievements_collection.find_one({
+                    "user_id": {"$in": [user_id, user_oid]},
+                    "achievement_id": "baseline_boss"
+                })
+                
+                if not baseline_boss or not baseline_boss.get("is_unlocked", False):
+                    achievement_service.update_achievement_progress(
+                        user_id,
+                        "baseline_boss",
+                        1.0,
+                        {"retroactive_fix": True, "goal_count": total_goals}
+                    )
+                    fixes_applied.append("baseline_boss")
+                    logger.info(f"Fixed Baseline Boss achievement for user {user_id}")
+            
+            return {
+                "success": True,
+                "user_id": user_id,
+                "fixes_applied": fixes_applied,
+                "total_analyses": total_analyses,
+                "total_goals": total_goals,
+                "data_format_used": format_used,
+                "message": f"Applied {len(fixes_applied)} retroactive fixes"
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in retroactive fix: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "user_id": user_id
+            }
+            
+    except Exception as e:
+        logger.error(f"Fatal error in retroactive achievement fix: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

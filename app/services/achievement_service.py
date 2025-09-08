@@ -42,6 +42,32 @@ class AchievementService:
         self.achievement_sync_collection.create_index("user_id")
         self.achievement_sync_collection.create_index("sync_timestamp")
     
+    def _get_user_query_format(self, user_id: str, db, collection_name: str):
+        """Determine if the collection uses ObjectId or string format for user_id"""
+        try:
+            user_oid = ObjectId(user_id)
+        except:
+            logger.error(f"Invalid user_id format: {user_id}")
+            raise ValueError(f"Invalid user_id format: {user_id}")
+        
+        collection = db[collection_name]
+        
+        # Check if ObjectId format exists
+        oid_count = collection.count_documents({"user_id": user_oid})
+        
+        # Check if string format exists
+        str_count = collection.count_documents({"user_id": user_id})
+        
+        logger.info(f"User ID format check for {collection_name}: ObjectId={oid_count}, string={str_count}")
+        
+        if oid_count > 0:
+            return user_oid
+        elif str_count > 0:
+            return user_id
+        else:
+            # Default to ObjectId for new records
+            return user_oid
+    
     def initialize_user_achievements(self, user_id: str) -> List[Dict[str, Any]]:
         """Initialize all achievements for a new user"""
         # Always convert to ObjectId for consistency
@@ -212,9 +238,10 @@ class AchievementService:
             db = get_database()
             from bson import ObjectId
             
-            # user_oid is already converted at the beginning of the function
+            # CRITICAL FIX: Use the correct user_id format for skin_analyses collection
+            user_query = self._get_user_query_format(user_id, db, "skin_analyses")
             analysis_count = db.skin_analyses.count_documents({
-                "user_id": user_oid
+                "user_id": user_query
             })
             
             logger.info(f"User {user_id} has {analysis_count} total analyses")
@@ -305,9 +332,10 @@ class AchievementService:
         
         elif action.action_type == "ingredient_viewed":
             # Count unique ingredients viewed
+            # CRITICAL FIX: Use ObjectId for consistency with achievement_actions collection
             unique_ingredients = self.achievement_actions_collection.distinct(
                 "data.ingredient_name",
-                {"user_id": user_id, "action_type": "ingredient_viewed"}
+                {"user_id": user_oid, "action_type": "ingredient_viewed"}
             )
             count = len(unique_ingredients)
             
@@ -321,8 +349,9 @@ class AchievementService:
                     updated_achievements.append(achievement)
         
         elif action.action_type == "tip_shared":
+            # CRITICAL FIX: Use ObjectId for consistency with achievement_actions collection
             tip_count = self.achievement_actions_collection.count_documents({
-                "user_id": user_id,
+                "user_id": user_oid,
                 "action_type": "tip_shared"
             })
             
@@ -336,8 +365,9 @@ class AchievementService:
                     updated_achievements.append(achievement)
         
         elif action.action_type == "member_helped":
+            # CRITICAL FIX: Use ObjectId for consistency with achievement_actions collection
             help_count = self.achievement_actions_collection.count_documents({
-                "user_id": user_id,
+                "user_id": user_oid,
                 "action_type": "member_helped"
             })
             
@@ -448,7 +478,9 @@ class AchievementService:
             # Check if user has analysis records
             from ..database import get_database
             db = get_database()
-            analysis_count = db.skin_analyses.count_documents({"user_id": user_id})
+            # CRITICAL FIX: Use correct user_id format for verification
+            user_query = self._get_user_query_format(user_id, db, "skin_analyses")
+            analysis_count = db.skin_analyses.count_documents({"user_id": user_query})
             return analysis_count > 0 and reported_progress <= 1.0
         
         elif trigger_type == "streak":
@@ -472,7 +504,9 @@ class AchievementService:
             # Verify photo count matches analysis records
             from ..database import get_database
             db = get_database()
-            analysis_count = db.skin_analyses.count_documents({"user_id": user_id})
+            # CRITICAL FIX: Use correct user_id format for verification
+            user_query = self._get_user_query_format(user_id, db, "skin_analyses")
+            analysis_count = db.skin_analyses.count_documents({"user_id": user_query})
             reported_count = progress_data.get("photo_count", 0)
             
             # Allow some discrepancy (client might count differently)
@@ -569,7 +603,9 @@ class AchievementService:
             user_obj_id = user_id
         
         # Check skin analyses for First Glow and Progress Pioneer
-        analysis_count = db.skin_analyses.count_documents({"user_id": user_obj_id})
+        # CRITICAL FIX: Use the correct user_id format for skin_analyses collection
+        user_query = self._get_user_query_format(user_id, db, "skin_analyses")
+        analysis_count = db.skin_analyses.count_documents({"user_id": user_query})
         
         if analysis_count > 0:
             # First Glow achievement
@@ -593,7 +629,9 @@ class AchievementService:
                 logger.info(f"Synced Progress Pioneer achievement for user {user_id}: {analysis_count} photos")
         
         # Check for goals (Baseline Boss)
-        goal_count = db.goals.count_documents({"user_id": user_obj_id})
+        # CRITICAL FIX: Use the correct user_id format for goals collection
+        goal_query = self._get_user_query_format(user_id, db, "goals")
+        goal_count = db.goals.count_documents({"user_id": goal_query})
         if goal_count > 0:
             achievement = self.update_achievement_progress(
                 user_id, "baseline_boss", 1.0,
@@ -604,7 +642,9 @@ class AchievementService:
                 logger.info(f"Synced Baseline Boss achievement for user {user_id}")
         
         # Check for routines (Routine Revolutionary)
-        routines = list(db.routines.find({"user_id": user_obj_id}))
+        # CRITICAL FIX: Use the correct user_id format for routines collection
+        routine_query = self._get_user_query_format(user_id, db, "routines")
+        routines = list(db.routines.find({"user_id": routine_query}))
         has_morning = any(r.get("type") == "morning" for r in routines)
         has_evening = any(r.get("type") == "evening" for r in routines)
         

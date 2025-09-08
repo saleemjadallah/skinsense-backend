@@ -6,6 +6,7 @@ This module provides helper functions to track achievements from other API endpo
 from typing import Optional, Dict, Any
 from datetime import datetime
 import logging
+from bson import ObjectId
 
 from ...models.achievement import AchievementAction
 from ...services.achievement_service import AchievementService
@@ -34,13 +35,25 @@ def track_skin_analysis_completion(user_id: str, analysis_id: str, skin_score: O
         if skin_score:
             # Get previous analyses to check for improvement
             from ...database import get_database
+            from bson import ObjectId
             db = get_database()
+            
+            # CRITICAL FIX: Determine correct user_id format for skin_analyses collection
+            try:
+                user_oid = ObjectId(user_id)
+                # Check which format exists in the collection
+                oid_count = db.skin_analyses.count_documents({"user_id": user_oid})
+                str_count = db.skin_analyses.count_documents({"user_id": user_id})
+                
+                user_query = user_oid if oid_count > 0 else user_id
+            except:
+                user_query = user_id
             
             # Get last analysis before this one
             previous_analyses = list(db.skin_analyses.find(
                 {
-                    "user_id": user_id,
-                    "_id": {"$ne": analysis_id}
+                    "user_id": user_query,
+                    "_id": {"$ne": ObjectId(analysis_id) if isinstance(analysis_id, str) else analysis_id}
                 }
             ).sort("created_at", -1).limit(1))
             
@@ -90,7 +103,18 @@ def track_routine_creation(user_id: str, routine_id: str, routine_type: str):
         db = get_database()
         
         # Check if user has both AM and PM routines
-        routines = list(db.routines.find({"user_id": user_id}))
+        # CRITICAL FIX: Determine correct user_id format for routines collection
+        try:
+            user_oid = ObjectId(user_id)
+            # Check which format exists in the collection
+            oid_count = db.routines.count_documents({"user_id": user_oid})
+            str_count = db.routines.count_documents({"user_id": user_id})
+            
+            user_query = user_oid if oid_count > 0 else user_id
+        except:
+            user_query = user_id
+            
+        routines = list(db.routines.find({"user_id": user_query}))
         has_morning = any(r.get("type") == "morning" for r in routines)
         has_evening = any(r.get("type") == "evening" for r in routines)
         
