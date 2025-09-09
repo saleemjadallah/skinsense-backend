@@ -153,18 +153,18 @@ class OrboSkinAnalysisService:
                 }
             
             # Map to SkinSense parameters (10 key metrics from CLAUDE.md)
-            # Note: Some ORBO scores need to be inverted (higher is worse in ORBO, but we want higher is better)
+            # ORBO output_score provides scores where 100 = best, 0 = worst (confirmed by ORBO AI)
             skinsense_metrics = {
                 'overall_skin_health_score': scores.get('skin_health', {}).get('score', 0),
                 'hydration': scores.get('hydration', {}).get('score', 0),
                 'smoothness': scores.get('smoothness', {}).get('score', 0),
-                'radiance': 100 - scores.get('skin_dullness', {}).get('score', 0),  # Invert dullness for radiance
-                'dark_spots': 100 - scores.get('dark_spots', {}).get('score', 0),   # Invert for uniformity
+                'radiance': scores.get('radiance', {}).get('score', 0) if 'radiance' in scores else scores.get('skin_dullness', {}).get('score', 0),  # Use radiance directly or dullness as fallback
+                'dark_spots': scores.get('dark_spots', {}).get('score', 0),   # Higher score = better (less dark spots)
                 'firmness': scores.get('firmness', {}).get('score', 0),
-                'fine_lines_wrinkles': 100 - scores.get('face_wrinkles', {}).get('score', 0),  # Invert wrinkles
-                'acne': 100 - scores.get('acne', {}).get('score', 0),  # Invert acne
-                'dark_circles': 100 - scores.get('dark_circle', {}).get('score', 0),  # Invert dark circles
-                'redness': 100 - scores.get('redness', {}).get('score', 0),  # Invert redness
+                'fine_lines_wrinkles': scores.get('fine_lines_wrinkles', {}).get('score', 0) if 'fine_lines_wrinkles' in scores else scores.get('face_wrinkles', {}).get('score', 0),  # Higher score = better (fewer wrinkles)
+                'acne': scores.get('acne', {}).get('score', 0),  # Higher score = better (less acne)
+                'dark_circles': scores.get('dark_circles', {}).get('score', 0) if 'dark_circles' in scores else scores.get('dark_circle', {}).get('score', 0),  # Higher score = better (less dark circles)
+                'redness': scores.get('redness', {}).get('score', 0),  # Higher score = better (less redness)
             }
             
             return {
