@@ -81,7 +81,7 @@ class AchievementService:
         
         for achievement_def in ACHIEVEMENT_DEFINITIONS:
             user_achievement = UserAchievement(
-                user_id=user_oid,  # Use ObjectId
+                user_id=str(user_oid),  # Convert ObjectId to string for Pydantic model
                 achievement_id=achievement_def.achievement_id,
                 progress=0.0,
                 is_unlocked=False,
@@ -89,17 +89,21 @@ class AchievementService:
                 verified=False
             )
             
+            # Prepare data for database (with ObjectId)
+            db_data = user_achievement.dict()
+            db_data["user_id"] = user_oid  # Store as ObjectId in DB
+            
             # Insert or update
             self.achievements_collection.update_one(
                 {
                     "user_id": user_oid,  # Use ObjectId
                     "achievement_id": achievement_def.achievement_id
                 },
-                {"$setOnInsert": user_achievement.dict()},
+                {"$setOnInsert": db_data},
                 upsert=True
             )
             
-            # Merge with definition for response
+            # Merge with definition for response (user_id already as string from Pydantic model)
             merged = {**achievement_def.dict(), **user_achievement.dict()}
             user_achievements.append(merged)
         
@@ -132,14 +136,19 @@ class AchievementService:
             )
             
             if progress:
+                # CRITICAL FIX: Convert ObjectId to string before merging
+                progress_clean = progress.copy()
+                progress_clean.pop("_id", None)  # Remove MongoDB _id
+                if isinstance(progress_clean.get("user_id"), ObjectId):
+                    progress_clean["user_id"] = str(progress_clean["user_id"])
+                
                 # Merge definition with progress
-                merged = {**achievement_def.dict(), **progress}
-                merged.pop("_id", None)  # Remove MongoDB _id
+                merged = {**achievement_def.dict(), **progress_clean}
                 achievements.append(merged)
             else:
                 # User doesn't have this achievement yet, create it
                 new_achievement = UserAchievement(
-                    user_id=user_oid,  # Use ObjectId
+                    user_id=str(user_oid),  # Convert ObjectId to string for Pydantic model
                     achievement_id=achievement_def.achievement_id,
                     progress=0.0,
                     is_unlocked=False,
@@ -147,7 +156,12 @@ class AchievementService:
                     verified=False
                 )
                 
-                self.achievements_collection.insert_one(new_achievement.dict())
+                # Store in database with ObjectId
+                db_data = new_achievement.dict()
+                db_data["user_id"] = user_oid  # Store as ObjectId in DB
+                self.achievements_collection.insert_one(db_data)
+                
+                # Return with string user_id
                 merged = {**achievement_def.dict(), **new_achievement.dict()}
                 achievements.append(merged)
         
@@ -204,9 +218,14 @@ class AchievementService:
         )
         
         if result:
+            # CRITICAL FIX: Convert ObjectId to string before merging
+            result_clean = result.copy()
+            result_clean.pop("_id", None)  # Remove MongoDB _id
+            if isinstance(result_clean.get("user_id"), ObjectId):
+                result_clean["user_id"] = str(result_clean["user_id"])
+            
             # Merge with definition
-            merged = {**achievement_def.dict(), **result}
-            merged.pop("_id", None)
+            merged = {**achievement_def.dict(), **result_clean}
             
             logger.info(f"Updated achievement {achievement_id} for user {user_id}: progress={progress}, unlocked={is_unlocked}")
             return merged
@@ -380,7 +399,16 @@ class AchievementService:
                 if achievement:
                     updated_achievements.append(achievement)
         
-        return updated_achievements
+        # CRITICAL FIX: Ensure all achievements have ObjectIds converted to strings
+        clean_achievements = []
+        for achievement in updated_achievements:
+            if achievement:
+                achievement_clean = achievement.copy()
+                if isinstance(achievement_clean.get("user_id"), ObjectId):
+                    achievement_clean["user_id"] = str(achievement_clean["user_id"])
+                clean_achievements.append(achievement_clean)
+        
+        return clean_achievements
     
     def sync_achievements(self, user_id: str, sync_data: AchievementSync) -> Dict[str, Any]:
         """Sync achievements from client and verify them"""
@@ -420,7 +448,11 @@ class AchievementService:
                 )
                 
                 if result:
-                    updated.append(result)
+                    # CRITICAL FIX: Convert ObjectId to string
+                    result_clean = result.copy()
+                    if isinstance(result_clean.get("user_id"), ObjectId):
+                        result_clean["user_id"] = str(result_clean["user_id"])
+                    updated.append(result_clean)
                     
                     # Mark as verified if completed
                     if achievement_progress.progress >= 1.0:
@@ -545,6 +577,14 @@ class AchievementService:
             if achievement.get("is_unlocked", False):
                 categories[category]["unlocked"] += 1
         
+        # CRITICAL FIX: Clean recent unlocks to ensure ObjectId serialization
+        recent_unlocks = []
+        for achievement in [a for a in achievements if a.get("is_unlocked", False)][:3]:
+            achievement_clean = achievement.copy()
+            if isinstance(achievement_clean.get("user_id"), ObjectId):
+                achievement_clean["user_id"] = str(achievement_clean["user_id"])
+            recent_unlocks.append(achievement_clean)
+
         return {
             "total_achievements": total,
             "unlocked_achievements": unlocked,
@@ -552,7 +592,7 @@ class AchievementService:
             "completion_percentage": round((unlocked / total * 100) if total > 0 else 0, 1),
             "total_points": total_points,
             "categories": categories,
-            "recent_unlocks": [a for a in achievements if a.get("is_unlocked", False)][:3]
+            "recent_unlocks": recent_unlocks
         }
     
     def verify_all_user_achievements(self, user_id: str) -> Dict[str, Any]:
@@ -657,10 +697,19 @@ class AchievementService:
                 updated_achievements.append(achievement)
                 logger.info(f"Synced Routine Revolutionary achievement for user {user_id}")
         
+        # CRITICAL FIX: Ensure all achievements have ObjectIds converted to strings
+        clean_achievements = []
+        for achievement in updated_achievements:
+            if achievement:
+                achievement_clean = achievement.copy()
+                if isinstance(achievement_clean.get("user_id"), ObjectId):
+                    achievement_clean["user_id"] = str(achievement_clean["user_id"])
+                clean_achievements.append(achievement_clean)
+
         return {
             "user_id": user_id,
-            "synced_achievements": len(updated_achievements),
-            "achievements": updated_achievements,
+            "synced_achievements": len(clean_achievements),
+            "achievements": clean_achievements,
             "analysis_count": analysis_count,
             "goal_count": goal_count,
             "routine_count": len(routines),
