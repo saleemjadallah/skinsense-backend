@@ -734,6 +734,10 @@ async def save_orbo_sdk_result(
             if concern:
                 orbo_scores[concern] = score
         
+        # Log the actual concern names received from ORBO for debugging
+        logger.info(f"ORBO concern names received: {list(orbo_scores.keys())}")
+        logger.info(f"ORBO scores sample: {dict(list(orbo_scores.items())[:3])}")
+        
         # Validate that we have actual scores from ORBO
         if not orbo_scores:
             logger.error(f"No scores received from ORBO SDK for user {current_user.id}")
@@ -755,8 +759,37 @@ async def save_orbo_sdk_result(
         # Create ORBOMetrics from the SDK data - mapping ORBO concerns to our metrics
         # Note: ORBO scores are 0-100 where higher = worse, we may need to invert some
         # Also handle alternative names from ORBO (shine, uneven_skin, etc.)
+        
+        # Calculate overall skin health score as average of inverted problem scores
+        # This ensures we always have an overall score even if ORBO doesn't provide one
+        problem_scores = []
+        if 'acne' in orbo_scores: problem_scores.append(orbo_scores['acne'])
+        if 'dark_spots' in orbo_scores: problem_scores.append(orbo_scores['dark_spots'])
+        if 'dark_circle' in orbo_scores or 'dark_circles' in orbo_scores:
+            problem_scores.append(orbo_scores.get('dark_circle', orbo_scores.get('dark_circles', 30)))
+        if 'face_wrinkles' in orbo_scores or 'eye_wrinkles' in orbo_scores:
+            problem_scores.append(orbo_scores.get('face_wrinkles', orbo_scores.get('eye_wrinkles', 30)))
+        if 'redness' in orbo_scores: problem_scores.append(orbo_scores['redness'])
+        if 'uneven_skin' in orbo_scores: problem_scores.append(orbo_scores['uneven_skin'])
+        if 'skin_dullness' in orbo_scores or 'shine' in orbo_scores:
+            problem_scores.append(orbo_scores.get('skin_dullness', orbo_scores.get('shine', 30)))
+        
+        # Calculate overall score: 100 - average of problem scores
+        if problem_scores:
+            avg_problems = sum(problem_scores) / len(problem_scores)
+            calculated_overall = 100 - avg_problems
+        else:
+            calculated_overall = 70.0  # Default if no scores
+        
+        # Use ORBO's overall score if available, otherwise use calculated
+        overall_score = orbo_scores.get('overall_skin_health_score', 
+                                       orbo_scores.get('skin_health',
+                                                     orbo_scores.get('overall_score', calculated_overall)))
+        
+        logger.info(f"Overall skin health score determined: {overall_score} (calculated: {calculated_overall})")
+        
         orbo_metrics = ORBOMetrics(
-            overall_skin_health_score=orbo_scores.get('skin_health', 70.0),
+            overall_skin_health_score=overall_score,
             hydration=orbo_scores.get('hydration', 70.0),
             smoothness=100 - orbo_scores.get('uneven_skin', 30.0),  # Invert uneven_skin
             radiance=100 - orbo_scores.get('skin_dullness', orbo_scores.get('shine', 30.0)),  # Use shine or dullness
@@ -795,10 +828,25 @@ async def save_orbo_sdk_result(
         )
         
         # Save initial analysis to MongoDB
-        result = db.skin_analyses.insert_one(analysis.dict(by_alias=True))
+        analysis_dict = analysis.dict(by_alias=True)
+        
+        # Log the metrics being saved for debugging
+        if 'orbo_response' in analysis_dict and 'metrics' in analysis_dict['orbo_response']:
+            metrics = analysis_dict['orbo_response']['metrics']
+            logger.info(f"Saving metrics to MongoDB - Overall: {metrics.get('overall_skin_health_score')}, "
+                       f"Hydration: {metrics.get('hydration')}, Acne: {metrics.get('acne')}")
+        
+        result = db.skin_analyses.insert_one(analysis_dict)
         analysis_id = str(result.inserted_id)
         
         logger.info(f"ORBO analysis saved with ID: {analysis_id}")
+        
+        # Verify the save by reading it back
+        saved_analysis = db.skin_analyses.find_one({"_id": result.inserted_id})
+        if saved_analysis and 'orbo_response' in saved_analysis and 'metrics' in saved_analysis['orbo_response']:
+            logger.info(f"Verified saved metrics - Overall score: {saved_analysis['orbo_response']['metrics'].get('overall_skin_health_score')}")
+        else:
+            logger.error(f"WARNING: Metrics may not have been saved properly for analysis {analysis_id}")
         
         # Update achievements: per-day photo count for streaks and totals
         try:
@@ -1107,7 +1155,15 @@ async def run_ai_for_analysis(
     from .achievement_integration import track_skin_analysis_completion
     
     # Get the overall skin score from the ORBO response
-    skin_score = orbo_response.get("overall_skin_health_score", 0)
+    # Check both possible locations: metrics.overall_skin_health_score or direct
+    skin_score = 0
+    if isinstance(orbo_response, dict):
+        if 'metrics' in orbo_response and isinstance(orbo_response['metrics'], dict):
+            skin_score = orbo_response['metrics'].get('overall_skin_health_score', 0)
+        else:
+            skin_score = orbo_response.get('overall_skin_health_score', 0)
+    
+    logger.info(f"Extracted skin score for achievement tracking: {skin_score}")
     
     # Track the achievement
     track_skin_analysis_completion(
