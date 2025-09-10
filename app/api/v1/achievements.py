@@ -71,25 +71,46 @@ async def get_user_achievements(
         
         achievements = achievement_service.get_user_achievements(str(current_user.id))
         
+        # Transform achievements to match frontend model expectations
+        transformed_achievements = []
+        for achievement in achievements:
+            # Map backend fields to frontend expected fields
+            transformed = {
+                "id": achievement.get("achievement_id"),
+                "title": achievement.get("title"),
+                "description": achievement.get("description"),
+                "badgePath": f"assets/Achievement badges/{achievement.get('title', '')}.png",
+                "backgroundBadgePath": f"assets/Achievement badges/with bg/{achievement.get('title', '')} bg.png",
+                "category": achievement.get("category"),
+                "difficulty": achievement.get("difficulty"),
+                "points": achievement.get("points"),
+                "isUnlocked": achievement.get("is_unlocked", False),
+                "progress": achievement.get("progress", 0.0),
+                "unlockedAt": achievement.get("unlocked_at"),
+                "triggerCondition": achievement.get("trigger_condition", {}),
+                "emoji": achievement.get("emoji"),
+            }
+            transformed_achievements.append(transformed)
+        
         # Log First Glow status for debugging
-        first_glow = next((a for a in achievements if a.get("achievement_id") == "first_glow"), None)
+        first_glow = next((a for a in transformed_achievements if a.get("id") == "first_glow"), None)
         if first_glow:
-            logger.info(f"First Glow for user {current_user.id}: unlocked={first_glow.get('is_unlocked')}, progress={first_glow.get('progress')}")
+            logger.info(f"First Glow for user {current_user.id}: unlocked={first_glow.get('isUnlocked')}, progress={first_glow.get('progress')}")
         
         # Filter by category if requested
         if category:
-            achievements = [a for a in achievements if a.get("category") == category]
+            transformed_achievements = [a for a in transformed_achievements if a.get("category") == category]
         
         # Filter by unlock status if requested
         if unlocked_only:
-            achievements = [a for a in achievements if a.get("is_unlocked", False)]
+            transformed_achievements = [a for a in transformed_achievements if a.get("isUnlocked", False)]
         
-        unlocked_count = len([a for a in achievements if a.get("is_unlocked", False)])
-        logger.info(f"Returning {len(achievements)} achievements ({unlocked_count} unlocked) for user {current_user.id}")
+        unlocked_count = len([a for a in transformed_achievements if a.get("isUnlocked", False)])
+        logger.info(f"Returning {len(transformed_achievements)} achievements ({unlocked_count} unlocked) for user {current_user.id}")
         
         return {
-            "achievements": achievements,
-            "total": len(achievements),
+            "achievements": transformed_achievements,
+            "total": len(transformed_achievements),
             "unlocked": unlocked_count
         }
     except Exception as e:

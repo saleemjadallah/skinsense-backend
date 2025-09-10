@@ -233,6 +233,54 @@ class S3Service:
         except ClientError as e:
             logger.error(f"S3 upload failed: {e}")
             raise
+    
+    async def upload_community_image(self, file_data: bytes, filename: str, folder: str = "community") -> str:
+        """
+        Upload community post image to S3
+        """
+        try:
+            # Generate unique filename
+            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            unique_id = str(uuid.uuid4())[:8]
+            extension = filename.split('.')[-1] if '.' in filename else 'jpg'
+            final_filename = f"{folder}/{timestamp}_{unique_id}.{extension}"
+            
+            # If S3 is not configured, return placeholder
+            if not self.has_s3_config:
+                logger.warning("S3 not configured. Returning placeholder URL.")
+                return f"s3-disabled://{final_filename}"
+            
+            # Process image
+            try:
+                processed_image = self._process_image(file_data, max_size=1024, quality=90)
+                content_type = "image/jpeg"
+            except Exception:
+                logger.warning("Using original image without processing")
+                processed_image = file_data
+                content_type = self._detect_mime_from_bytes(file_data) or "image/jpeg"
+            
+            # Upload to S3
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=final_filename,
+                Body=processed_image,
+                ContentType=content_type,
+                CacheControl="max-age=31536000",
+                Metadata={
+                    'uploaded_at': datetime.utcnow().isoformat(),
+                    'service': 'skinsense-community'
+                }
+            )
+            
+            # Return URL
+            if self.cloudfront_domain:
+                return f"https://{self.cloudfront_domain}/{final_filename}"
+            else:
+                return f"https://{self.bucket_name}.s3.{self.aws_region}.amazonaws.com/{final_filename}"
+                
+        except Exception as e:
+            logger.error(f"Community image upload failed: {e}")
+            raise
 
 # Global instance
 s3_service = S3Service()

@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Form, File, UploadFile
 from pymongo.database import Database
 from typing import List, Optional, Any
 from datetime import datetime, timedelta
 from bson import ObjectId
 import logging
+import json
 
 from app.database import get_database
 from app.api.deps import get_current_active_user
@@ -63,13 +64,13 @@ def get_post_interactions(post_id: Any, user_id: Any, db: Database) -> dict:
     }
 
 
-@router.post("/posts", response_model=PostResponse)
-async def create_post(
+@router.post("/posts/json", response_model=PostResponse)
+async def create_post_json(
     post_data: PostCreate,
     current_user: UserModel = Depends(get_current_active_user),
     db: Database = Depends(get_database)
 ):
-    """Create a new community post"""
+    """Create a new community post (JSON version without image support)"""
     
     # Check if user can post (premium only)
     if not SubscriptionService.can_post_community(current_user):
@@ -117,7 +118,89 @@ async def create_post(
         
     except Exception as e:
         logger.error(f"Error creating post: {e}")
-        raise HTTPException(status_code=500, detail="Failed to create post")
+        raise HTTPException(status_code=500, detail=f"Failed to create post: {str(e)}")
+
+
+@router.post("/posts", response_model=PostResponse)
+async def create_post(
+    content: str = Form(...),
+    post_type: str = Form("post"),
+    is_anonymous: str = Form("false"),
+    tags: Optional[List[str]] = Form(default=[]),
+    images: Optional[List[UploadFile]] = File(default=None),
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Database = Depends(get_database)
+):
+    """Create a new community post with optional image uploads"""
+    
+    # Check if user can post (premium only)
+    if not SubscriptionService.can_post_community(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": "Community posting is a premium feature",
+                "upgrade_prompt": "Upgrade to Premium to share your skincare journey and connect with the community!"
+            }
+        )
+    
+    try:
+        # Parse is_anonymous from string to boolean
+        is_anonymous_bool = is_anonymous.lower() == "true"
+        
+        # Parse tags if they come as a single string
+        if isinstance(tags, str):
+            tags = [tag.strip() for tag in tags.split(',') if tag.strip()]
+        elif tags is None:
+            tags = []
+        
+        # Handle image upload if provided
+        image_url = None
+        if images and len(images) > 0 and images[0].filename:
+            # Upload first image to S3
+            image = images[0]
+            file_content = await image.read()
+            image_url = await s3_service.upload_community_image(
+                file_content,
+                image.filename,
+                f"community/{current_user.id}"
+            )
+        
+        # Create post document
+        post = CommunityPost(
+            user_id=current_user.id,
+            content=content,
+            image_url=image_url,
+            tags=tags,
+            post_type=post_type,
+            is_anonymous=is_anonymous_bool
+        )
+        
+        # Insert into database
+        result = db.community_posts.insert_one(post.model_dump(by_alias=True))
+        post.id = result.inserted_id
+        
+        # Get user profile (handle anonymous)
+        user_profile = get_user_profile(current_user.id, db, is_anonymous=post.is_anonymous)
+        
+        # Return response
+        return PostResponse(
+            id=str(post.id),
+            user=user_profile,
+            content=post.content,
+            image_url=post.image_url,
+            tags=post.tags,
+            post_type=post.post_type,
+            created_at=post.created_at,
+            likes_count=0,
+            comments_count=0,
+            saves_count=0,
+            is_liked=False,
+            is_saved=False
+        )
+        
+    except Exception as e:
+        logger.error(f"Error creating post: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to create post: {str(e)}")
 
 
 @router.get("/posts", response_model=PostListResponse)
