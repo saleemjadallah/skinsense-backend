@@ -133,15 +133,42 @@ async def create_skin_analysis(
         result = db.skin_analyses.insert_one(analysis.dict(by_alias=True))
         analysis_id = result.inserted_id
         
-        # Update achievements cache for streak tracking
+        # Update achievements cache for streak tracking  
         day_start = get_utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # Calculate current streak
+        yesterday_start = day_start - timedelta(days=1)
+        yesterday_entry = db.achievements.find_one({
+            "user_id": ObjectId(str(current_user.id)),
+            "date": yesterday_start
+        })
+        
+        current_streak = 1  # Today counts as 1
+        if yesterday_entry and yesterday_entry.get("photos_taken", 0) > 0:
+            # Continue counting backwards to find full streak
+            streak_days = 1
+            check_date = yesterday_start
+            while True:
+                check_date = check_date - timedelta(days=1)
+                entry = db.achievements.find_one({
+                    "user_id": ObjectId(str(current_user.id)),
+                    "date": check_date
+                })
+                if entry and entry.get("photos_taken", 0) > 0:
+                    streak_days += 1
+                else:
+                    break
+            current_streak = streak_days + 1  # Add today
+        
+        logger.info(f"Calculated streak for user {current_user.id}: {current_streak} days (analyze endpoint)")
+        
         db.achievements.update_one(
             {"user_id": ObjectId(str(current_user.id)), "date": day_start},
             {
                 "$setOnInsert": {"created_at": get_utc_now()},
                 "$inc": {"photos_taken": 1},
                 "$addToSet": {"analysis_ids": str(analysis_id)},
-                "$set": {"updated_at": get_utc_now()}
+                "$set": {"streak_current": current_streak, "updated_at": get_utc_now()}
             },
             upsert=True
         )
@@ -573,13 +600,40 @@ async def complete_ai_pipeline(
         
         # Update achievements cache for streak tracking
         day_start = get_utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # Calculate current streak
+        yesterday_start = day_start - timedelta(days=1)
+        yesterday_entry = db.achievements.find_one({
+            "user_id": ObjectId(str(current_user.id)),
+            "date": yesterday_start
+        })
+        
+        current_streak = 1  # Today counts as 1
+        if yesterday_entry and yesterday_entry.get("photos_taken", 0) > 0:
+            # Continue counting backwards to find full streak
+            streak_days = 1
+            check_date = yesterday_start
+            while True:
+                check_date = check_date - timedelta(days=1)
+                entry = db.achievements.find_one({
+                    "user_id": ObjectId(str(current_user.id)),
+                    "date": check_date
+                })
+                if entry and entry.get("photos_taken", 0) > 0:
+                    streak_days += 1
+                else:
+                    break
+            current_streak = streak_days + 1  # Add today
+        
+        logger.info(f"Calculated streak for user {current_user.id}: {current_streak} days (complete-pipeline)")
+        
         db.achievements.update_one(
             {"user_id": ObjectId(str(current_user.id)), "date": day_start},
             {
                 "$setOnInsert": {"created_at": get_utc_now()},
                 "$inc": {"photos_taken": 1},
                 "$addToSet": {"analysis_ids": str(analysis_id)},
-                "$set": {"updated_at": get_utc_now()}
+                "$set": {"streak_current": current_streak, "updated_at": get_utc_now()}
             },
             upsert=True
         )
@@ -855,12 +909,46 @@ async def save_orbo_sdk_result(
         except Exception:
             pass
         day_start = get_utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # Calculate current streak to update in cache
+        from datetime import timedelta
+        
+        # Check if user has an entry for yesterday
+        yesterday_start = day_start - timedelta(days=1)
+        yesterday_entry = db.achievements.find_one({
+            "user_id": ObjectId(str(current_user.id)),
+            "date": yesterday_start
+        })
+        
+        # Calculate streak - if yesterday has photos, we're continuing a streak
+        # Otherwise, we're starting a new streak today
+        current_streak = 1  # Today counts as 1
+        if yesterday_entry and yesterday_entry.get("photos_taken", 0) > 0:
+            # Continue counting backwards to find full streak
+            streak_days = 1
+            check_date = yesterday_start
+            while True:
+                check_date = check_date - timedelta(days=1)
+                entry = db.achievements.find_one({
+                    "user_id": ObjectId(str(current_user.id)),
+                    "date": check_date
+                })
+                if entry and entry.get("photos_taken", 0) > 0:
+                    streak_days += 1
+                else:
+                    break
+            current_streak = streak_days + 1  # Add today
+        
+        logger.info(f"Calculated streak for user {current_user.id}: {current_streak} days")
+        
+        # Update the achievements entry with streak information
         db.achievements.update_one(
             {"user_id": ObjectId(str(current_user.id)), "date": day_start},
             {
                 "$setOnInsert": {"created_at": get_utc_now()},
                 "$inc": {"photos_taken": 1},
                 "$addToSet": {"analysis_ids": analysis_id},
+                "$set": {"streak_current": current_streak, "updated_at": get_utc_now()},
             },
             upsert=True,
         )
