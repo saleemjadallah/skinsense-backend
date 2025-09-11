@@ -12,7 +12,7 @@ import asyncio
 from app.core.config import settings
 from app.database import connect_to_mongo, close_mongo_connection, db
 from app.core.redis import get_redis, close_redis
-from app.api.v1 import auth, users, skin_analysis, products, community, routines, notifications, goals, plans, monitoring, learning, insights, homepage_optimized, pal, achievements, affiliate, batch, subscription
+from app.api.v1 import auth, users, skin_analysis, products, community, routines, notifications, goals, plans, monitoring, learning, insights, homepage_optimized, pal, achievements, affiliate, batch, subscription, user_data
 from app.api.v1.endpoints import calendar, reminders
 from app.core.monitoring import setup_metrics  # track_active_users
 
@@ -112,6 +112,7 @@ app.include_router(pal.router, prefix="/api/v1", tags=["Pal AI Assistant"])
 app.include_router(affiliate.router, prefix="/api/v1", tags=["Affiliate Tracking"])
 app.include_router(batch.router, prefix="/api/v1", tags=["Batch Processing"])
 app.include_router(subscription.router, prefix="/api/v1/subscription", tags=["Subscription"])
+app.include_router(user_data.router, prefix="/api/v1", tags=["User Data Export"])
 
 # Test endpoints removed - was causing import issues
 

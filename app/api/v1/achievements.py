@@ -150,6 +150,43 @@ async def sync_user_achievements(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/force-sync", response_model=Dict[str, Any])
+async def force_sync_achievements(
+    current_user: UserModel = Depends(get_current_user)
+):
+    """Force sync ALL achievements - initialize missing ones and sync existing data"""
+    try:
+        user_id = str(current_user.id)
+        logger.info(f"Force syncing achievements for user {user_id}")
+        
+        # First, initialize all achievements (creates missing ones as locked)
+        initialized = achievement_service.initialize_user_achievements(user_id)
+        logger.info(f"Initialized {len(initialized)} achievements for user {user_id}")
+        
+        # Then sync based on existing data to unlock earned achievements
+        sync_result = achievement_service.sync_achievements_from_existing_data(user_id)
+        
+        # Get the final state
+        all_achievements = achievement_service.get_user_achievements(user_id)
+        
+        # Count unlocked
+        unlocked_count = sum(1 for a in all_achievements if a.get("is_unlocked", False))
+        
+        return {
+            "status": "success",
+            "message": f"Force sync complete. {unlocked_count}/12 achievements unlocked",
+            "initialized": len(initialized),
+            "synced": sync_result.get("synced_achievements", 0),
+            "unlocked_count": unlocked_count,
+            "total_count": len(all_achievements),
+            "sync_details": sync_result,
+            "achievements": all_achievements
+        }
+    except Exception as e:
+        logger.error(f"Error force syncing achievements for user {current_user.id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/stats", response_model=Dict[str, Any])
 async def get_achievement_stats(
     current_user: UserModel = Depends(get_current_user)
