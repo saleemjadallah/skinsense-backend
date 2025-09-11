@@ -119,9 +119,9 @@ async def create_skin_analysis(
             "analysis"
         )
         
-        # Create initial analysis record
+        # Create initial analysis record - CRITICAL: use ObjectId for user_id
         analysis = SkinAnalysisModel(
-            user_id=current_user.id,
+            user_id=ObjectId(str(current_user.id)),
             image_url=image_url,
             thumbnail_url=thumbnail_url,
             is_baseline=analysis_data.is_baseline,
@@ -361,8 +361,10 @@ async def get_user_analyses(
 ):
     """Get user's skin analyses"""
     
+    # CRITICAL FIX: Check both ObjectId and string formats for user_id
+    user_oid = ObjectId(str(current_user.id))
     analyses = list(db.skin_analyses.find(
-        {"user_id": current_user.id}
+        {"user_id": {"$in": [user_oid, str(current_user.id)]}}
     ).sort("created_at", -1).skip(skip).limit(limit))
     
     return [
@@ -584,9 +586,9 @@ async def complete_ai_pipeline(
             "analysis"
         )
         
-        # Create initial analysis record
+        # Create initial analysis record - CRITICAL: use ObjectId for user_id
         analysis = SkinAnalysisModel(
-            user_id=current_user.id,
+            user_id=ObjectId(str(current_user.id)),
             image_url=image_url,
             thumbnail_url=thumbnail_url,
             is_baseline=analysis_data.is_baseline,
