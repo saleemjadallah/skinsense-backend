@@ -12,7 +12,7 @@ import asyncio
 from app.core.config import settings
 from app.database import connect_to_mongo, close_mongo_connection, db
 from app.core.redis import get_redis, close_redis
-from app.api.v1 import auth, users, skin_analysis, products, community, routines, notifications, goals, plans, monitoring, learning, insights, homepage_optimized, pal, achievements, affiliate, batch, subscription, user_data, achievements_debug
+from app.api.v1 import auth, users, skin_analysis, products, community, routines, notifications, goals, plans, monitoring, learning, insights, homepage_optimized, pal, achievements, affiliate, batch, subscription, user_data
 from app.api.v1.endpoints import calendar, reminders
 from app.core.monitoring import setup_metrics  # track_active_users
 
