@@ -101,7 +101,6 @@ app.include_router(routines.router, prefix="/api/v1/routines", tags=["Routines"]
 app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["Notifications"])
 app.include_router(goals.router, prefix="/api/v1/goals", tags=["Goals"])
 app.include_router(achievements.router, prefix="/api/v1", tags=["Achievements"])
-app.include_router(achievements_debug.router, prefix="/api/v1", tags=["Achievements Debug"])
 app.include_router(plans.router, prefix="/api/v1", tags=["Plans"])
 app.include_router(monitoring.router, prefix="/api/v1/monitoring", tags=["Monitoring"])
 app.include_router(learning.router, prefix="/api/v1/learning", tags=["Learning"])
