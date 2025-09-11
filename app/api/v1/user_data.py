@@ -6,22 +6,23 @@ from typing import Any, Dict
 from bson import ObjectId
 import io
 
-from app.core.database import get_database
-from app.api.v1.auth import get_current_user
+from ...database import get_database
+from ..deps import get_current_user
+from ...models.user import UserModel
 
 router = APIRouter(prefix="/user-data", tags=["user-data"])
 
 @router.get("/export")
 async def export_user_data(
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    db=Depends(get_database)
+    current_user: UserModel = Depends(get_current_user)
 ) -> StreamingResponse:
     """
     Export all user data in JSON format.
     Includes profile, analyses, routines, goals, achievements, and more.
     """
     try:
-        user_id = current_user["_id"]
+        db = get_database()
+        user_id = str(current_user.id)
         user_oid = ObjectId(user_id)
         
         # Prepare the export data
