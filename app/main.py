@@ -12,7 +12,7 @@ import asyncio
 from app.core.config import settings
 from app.database import connect_to_mongo, close_mongo_connection, db
 from app.core.redis import get_redis, close_redis
-from app.api.v1 import auth, users, skin_analysis, products, community, routines, notifications, goals, plans, monitoring, learning, insights, homepage_optimized, pal, achievements, affiliate, batch, subscription, user_data
+from app.api.v1 import auth, users, skin_analysis, products, community, routines, notifications, goals, plans, monitoring, learning, insights, homepage_optimized, pal, achievements, affiliate, batch, subscription, user_data, achievements_debug
 from app.api.v1.endpoints import calendar, reminders
 from app.core.monitoring import setup_metrics  # track_active_users
 
@@ -101,6 +101,7 @@ app.include_router(routines.router, prefix="/api/v1/routines", tags=["Routines"]
 app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["Notifications"])
 app.include_router(goals.router, prefix="/api/v1/goals", tags=["Goals"])
 app.include_router(achievements.router, prefix="/api/v1", tags=["Achievements"])
+app.include_router(achievements_debug.router, prefix="/api/v1", tags=["Achievements Debug"])
 app.include_router(plans.router, prefix="/api/v1", tags=["Plans"])
 app.include_router(monitoring.router, prefix="/api/v1/monitoring", tags=["Monitoring"])
 app.include_router(learning.router, prefix="/api/v1/learning", tags=["Learning"])

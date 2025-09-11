@@ -48,25 +48,33 @@ class AchievementService:
             user_oid = ObjectId(user_id)
         except:
             logger.error(f"Invalid user_id format: {user_id}")
-            raise ValueError(f"Invalid user_id format: {user_id}")
+            # Try as string if ObjectId conversion fails
+            return user_id
         
         collection = db[collection_name]
         
-        # Check if ObjectId format exists
+        # Check both formats and use whichever has data
+        # CRITICAL FIX: Check both formats properly
         oid_count = collection.count_documents({"user_id": user_oid})
-        
-        # Check if string format exists
         str_count = collection.count_documents({"user_id": user_id})
         
         logger.info(f"User ID format check for {collection_name}: ObjectId={oid_count}, string={str_count}")
         
+        # Return the format that has data, prefer ObjectId if both have data
         if oid_count > 0:
             return user_oid
         elif str_count > 0:
             return user_id
         else:
-            # Default to ObjectId for new records
-            return user_oid
+            # CRITICAL: For collections that might have mixed formats,
+            # check if we should default to the user collection format
+            user_in_db = db.users.find_one({"_id": user_oid})
+            if user_in_db:
+                # User exists, so other collections should use ObjectId too
+                return user_oid
+            else:
+                # Fallback to string
+                return user_id
     
     def initialize_user_achievements(self, user_id: str) -> List[Dict[str, Any]]:
         """Initialize all achievements for a new user"""
@@ -119,12 +127,31 @@ class AchievementService:
             logger.error(f"Invalid user_id format: {user_id}")
             raise ValueError(f"Invalid user_id format: {user_id}")
         
-        # Get user's achievement progress
-        user_progress = list(self.achievements_collection.find({"user_id": user_oid}))
+        # CRITICAL FIX: Check for achievements with BOTH ObjectId and string formats
+        # Some users may have achievements stored with string user_id due to past bugs
+        user_progress_oid = list(self.achievements_collection.find({"user_id": user_oid}))
+        user_progress_str = list(self.achievements_collection.find({"user_id": user_id}))
         
-        # If no achievements, initialize them
+        # Use whichever has data, prefer ObjectId format
+        user_progress = user_progress_oid if user_progress_oid else user_progress_str
+        
+        logger.info(f"Get achievements - User {user_id}: ObjectId format={len(user_progress_oid)}, string format={len(user_progress_str)}")
+        
+        # If no achievements found in either format, initialize them
         if not user_progress:
+            logger.info(f"No achievements found for user {user_id}, initializing...")
             return self.initialize_user_achievements(user_id)
+        
+        # MIGRATION FIX: If achievements exist with string format, migrate to ObjectId
+        if user_progress_str and not user_progress_oid:
+            logger.warning(f"Migrating achievements from string to ObjectId format for user {user_id}")
+            for achievement in user_progress_str:
+                self.achievements_collection.update_one(
+                    {"_id": achievement["_id"]},
+                    {"$set": {"user_id": user_oid}}
+                )
+            # Re-fetch with ObjectId
+            user_progress = list(self.achievements_collection.find({"user_id": user_oid}))
         
         # Merge with definitions
         achievements = []
@@ -257,11 +284,14 @@ class AchievementService:
             db = get_database()
             from bson import ObjectId
             
-            # CRITICAL FIX: Use the correct user_id format for skin_analyses collection
-            user_query = self._get_user_query_format(user_id, db, "skin_analyses")
-            analysis_count = db.skin_analyses.count_documents({
-                "user_id": user_query
-            })
+            # CRITICAL FIX: Check BOTH formats to ensure we count all analyses
+            try:
+                user_oid = ObjectId(user_id)
+                analysis_count_oid = db.skin_analyses.count_documents({"user_id": user_oid})
+                analysis_count_str = db.skin_analyses.count_documents({"user_id": user_id})
+                analysis_count = max(analysis_count_oid, analysis_count_str)
+            except:
+                analysis_count = db.skin_analyses.count_documents({"user_id": user_id})
             
             logger.info(f"User {user_id} has {analysis_count} total analyses")
             
@@ -636,26 +666,30 @@ class AchievementService:
         db = get_database()
         updated_achievements = []
         
-        # Convert user_id to ObjectId if it's a string
+        # CRITICAL FIX: Ensure user_id is properly handled
         try:
             user_obj_id = ObjectId(user_id)
         except:
+            logger.warning(f"Could not convert user_id to ObjectId: {user_id}")
             user_obj_id = user_id
         
         # Check skin analyses for First Glow and Progress Pioneer
-        # CRITICAL FIX: Use the correct user_id format for skin_analyses collection
-        user_query = self._get_user_query_format(user_id, db, "skin_analyses")
-        analysis_count = db.skin_analyses.count_documents({"user_id": user_query})
+        # CRITICAL FIX: Check BOTH ObjectId and string formats to catch all analyses
+        analysis_count_oid = db.skin_analyses.count_documents({"user_id": user_obj_id})
+        analysis_count_str = db.skin_analyses.count_documents({"user_id": user_id})
+        analysis_count = max(analysis_count_oid, analysis_count_str)
+        
+        logger.info(f"Sync check - User {user_id} analyses: ObjectId={analysis_count_oid}, string={analysis_count_str}, total={analysis_count}")
         
         if analysis_count > 0:
-            # First Glow achievement
+            # First Glow achievement - ALWAYS unlock if user has any analysis
             achievement = self.update_achievement_progress(
                 user_id, "first_glow", 1.0,
-                {"analysis_count": analysis_count}
+                {"analysis_count": analysis_count, "sync_source": "retroactive"}
             )
             if achievement:
                 updated_achievements.append(achievement)
-                logger.info(f"Synced First Glow achievement for user {user_id}")
+                logger.info(f"Synced First Glow achievement for user {user_id} with {analysis_count} analyses")
         
         # Progress Pioneer (10 photos)
         if analysis_count > 0:
@@ -669,9 +703,12 @@ class AchievementService:
                 logger.info(f"Synced Progress Pioneer achievement for user {user_id}: {analysis_count} photos")
         
         # Check for goals (Baseline Boss)
-        # CRITICAL FIX: Use the correct user_id format for goals collection
-        goal_query = self._get_user_query_format(user_id, db, "goals")
-        goal_count = db.goals.count_documents({"user_id": goal_query})
+        # CRITICAL FIX: Check BOTH formats for goals
+        goal_count_oid = db.goals.count_documents({"user_id": user_obj_id})
+        goal_count_str = db.goals.count_documents({"user_id": user_id})
+        goal_count = max(goal_count_oid, goal_count_str)
+        
+        logger.info(f"Sync check - User {user_id} goals: ObjectId={goal_count_oid}, string={goal_count_str}, total={goal_count}")
         if goal_count > 0:
             achievement = self.update_achievement_progress(
                 user_id, "baseline_boss", 1.0,
@@ -682,9 +719,12 @@ class AchievementService:
                 logger.info(f"Synced Baseline Boss achievement for user {user_id}")
         
         # Check for routines (Routine Revolutionary)
-        # CRITICAL FIX: Use the correct user_id format for routines collection
-        routine_query = self._get_user_query_format(user_id, db, "routines")
-        routines = list(db.routines.find({"user_id": routine_query}))
+        # CRITICAL FIX: Check BOTH formats for routines
+        routines_oid = list(db.routines.find({"user_id": user_obj_id}))
+        routines_str = list(db.routines.find({"user_id": user_id}))
+        routines = routines_oid if routines_oid else routines_str
+        
+        logger.info(f"Sync check - User {user_id} routines: ObjectId={len(routines_oid)}, string={len(routines_str)}, total={len(routines)}")
         has_morning = any(r.get("type") == "morning" for r in routines)
         has_evening = any(r.get("type") == "evening" for r in routines)
         

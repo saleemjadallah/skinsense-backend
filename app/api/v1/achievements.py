@@ -235,7 +235,7 @@ async def update_achievement_progress(
         
         # Update progress
         result = achievement_service.update_achievement_progress(
-            current_user.id,
+            str(current_user.id),  # CRITICAL FIX: Convert to string
             achievement_id,
             progress_update.progress,
             progress_update.progress_data
@@ -261,7 +261,7 @@ async def unlock_achievement(
     try:
         # Set progress to 1.0 (100%)
         result = achievement_service.update_achievement_progress(
-            current_user.id,
+            str(current_user.id),  # CRITICAL FIX: Convert to string
             achievement_id,
             1.0,
             {"unlocked_at": datetime.now().isoformat()}
@@ -289,7 +289,7 @@ async def track_achievement_action(
 ):
     """Track a user action that might affect achievement progress"""
     try:
-        updated_achievements = achievement_service.track_user_action(current_user.id, action)
+        updated_achievements = achievement_service.track_user_action(str(current_user.id), action)  # CRITICAL FIX: Convert to string
         
         return {
             "action": action.action_type,
@@ -312,7 +312,7 @@ async def sync_achievements(
     This endpoint is designed for periodic (weekly) verification of client-side progress.
     """
     try:
-        result = achievement_service.sync_achievements(current_user.id, sync_data)
+        result = achievement_service.sync_achievements(str(current_user.id), sync_data)  # CRITICAL FIX: Convert to string
         
         # Log sync activity
         logger.info(f"Achievement sync for user {current_user.id}: "
@@ -332,7 +332,7 @@ async def initialize_achievements(
 ):
     """Initialize all achievements for the current user (called on first app launch)"""
     try:
-        achievements = achievement_service.initialize_user_achievements(current_user.id)
+        achievements = achievement_service.initialize_user_achievements(str(current_user.id))  # CRITICAL FIX: Convert to string
         
         return {
             "initialized": True,
@@ -358,7 +358,7 @@ async def verify_all_achievements(
         raise HTTPException(status_code=403, detail="Unauthorized")
     
     try:
-        result = achievement_service.verify_all_user_achievements(current_user.id)
+        result = achievement_service.verify_all_user_achievements(str(current_user.id))  # CRITICAL FIX: Convert to string
         return result
     except Exception as e:
         logger.error(f"Error verifying achievements for user {current_user.id}: {str(e)}")
