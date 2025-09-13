@@ -1646,8 +1646,15 @@ async def get_metric_progress(
             detail=f"Invalid metric name. Valid metrics: {', '.join(valid_metrics)}"
         )
     
+    # Ensure user_id is ObjectId
+    from bson import ObjectId
+    try:
+        user_oid = current_user.id if isinstance(current_user.id, ObjectId) else ObjectId(str(current_user.id))
+    except:
+        user_oid = ObjectId(str(current_user.id))
+
     trend_data = progress_service.get_trend_data(
-        user_id=current_user.id,
+        user_id=user_oid,
         db=db,
         metric_name=metric_name,
         period_days=period_days
@@ -1725,8 +1732,15 @@ async def get_progress_summary(
 ):
     """Get comprehensive progress summary"""
     
+    # Ensure user_id is ObjectId
+    from bson import ObjectId
+    try:
+        user_oid = current_user.id if isinstance(current_user.id, ObjectId) else ObjectId(str(current_user.id))
+    except:
+        user_oid = ObjectId(str(current_user.id))
+
     summary = progress_service.generate_progress_summary(
-        user_id=current_user.id,
+        user_id=user_oid,
         db=db,
         period_days=period_days
     )
@@ -1741,16 +1755,23 @@ async def get_all_trends(
 ):
     """Get trend data for all metrics"""
     
+    # Ensure user_id is ObjectId
+    from bson import ObjectId
+    try:
+        user_oid = current_user.id if isinstance(current_user.id, ObjectId) else ObjectId(str(current_user.id))
+    except:
+        user_oid = ObjectId(str(current_user.id))
+
     metrics = [
         "overall_skin_health_score", "hydration", "smoothness", "radiance",
-        "dark_spots", "firmness", "fine_lines_wrinkles", "acne", 
+        "dark_spots", "firmness", "fine_lines_wrinkles", "acne",
         "dark_circles", "redness"
     ]
-    
+
     trends = {}
     for metric in metrics:
         trends[metric] = progress_service.get_trend_data(
-            user_id=current_user.id,
+            user_id=user_oid,
             db=db,
             metric_name=metric,
             period_days=period_days

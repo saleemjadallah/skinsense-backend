@@ -84,12 +84,20 @@ async def get_homepage_data(
 async def get_routine_summary_async(user_id: str, db) -> Dict[str, Any]:
     """Get routine summary with optimized query"""
     try:
+        # Convert user_id to ObjectId for MongoDB query
+        from bson import ObjectId
+        try:
+            user_oid = ObjectId(user_id)
+        except:
+            logger.error(f"Invalid user_id format: {user_id}")
+            return get_default_routine_summary()
+
         # Get today's routines efficiently
         today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-        
+
         # Single aggregation pipeline for all routine data
         pipeline = [
-            {"$match": {"user_id": user_id, "is_active": True}},
+            {"$match": {"user_id": user_oid, "is_active": True}},
             {"$facet": {
                 "routines": [
                     {"$sort": {"type": 1, "created_at": -1}},
@@ -156,9 +164,17 @@ async def get_routine_summary_async(user_id: str, db) -> Dict[str, Any]:
 async def get_goals_summary_async(user_id: str, db) -> Dict[str, Any]:
     """Get goals summary with optimized query"""
     try:
+        # Convert user_id to ObjectId for MongoDB query
+        from bson import ObjectId
+        try:
+            user_oid = ObjectId(user_id)
+        except:
+            logger.error(f"Invalid user_id format: {user_id}")
+            return get_default_goals_summary()
+
         # Single aggregation for all goal stats
         pipeline = [
-            {"$match": {"user_id": user_id}},
+            {"$match": {"user_id": user_oid}},
             {"$facet": {
                 "active": [
                     {"$match": {"status": "active"}},
@@ -204,10 +220,18 @@ async def get_goals_summary_async(user_id: str, db) -> Dict[str, Any]:
 async def get_progress_summary_async(user_id: str, db) -> Dict[str, Any]:
     """Get progress summary with optimized query"""
     try:
+        # Convert user_id to ObjectId for MongoDB query
+        from bson import ObjectId
+        try:
+            user_oid = ObjectId(user_id)
+        except:
+            logger.error(f"Invalid user_id format: {user_id}")
+            return get_default_progress_summary()
+
         # Get latest analysis with single query
         latest_analysis = db.skin_analyses.find_one(
-            {"user_id": user_id},
-            {"orbo_response": 1, "created_at": 1},
+            {"user_id": user_oid},
+            {"orbo_response": 1, "created_at": 1, "status": 1},
             sort=[("created_at", -1)]
         )
         
@@ -231,9 +255,17 @@ async def get_progress_summary_async(user_id: str, db) -> Dict[str, Any]:
 async def get_achievements_summary_async(user_id: str, db) -> Dict[str, Any]:
     """Get achievements summary with optimized query"""
     try:
+        # Convert user_id to ObjectId for MongoDB query
+        from bson import ObjectId
+        try:
+            user_oid = ObjectId(user_id)
+        except:
+            logger.error(f"Invalid user_id format: {user_id}")
+            return get_default_achievements_summary()
+
         # Count achievements efficiently
         pipeline = [
-            {"$match": {"user_id": user_id}},
+            {"$match": {"user_id": user_oid}},
             {"$group": {
                 "_id": "$unlocked",
                 "count": {"$sum": 1}
@@ -253,7 +285,7 @@ async def get_achievements_summary_async(user_id: str, db) -> Dict[str, Any]:
             end = start + timedelta(days=1)
             
             completion = db.routine_completions.find_one({
-                "user_id": user_id,
+                "user_id": user_oid,
                 "completed_at": {"$gte": start, "$lt": end}
             })
             
