@@ -20,6 +20,34 @@ router = APIRouter(prefix="/achievements", tags=["achievements"])
 achievement_service = AchievementService()
 
 
+# Helper mappers to ensure API returns values matching Flutter enums
+def _map_category_to_flutter(value):
+    try:
+        # If Enum, get underlying value
+        if isinstance(value, AchievementCategory):
+            value = value.value
+    except Exception:
+        pass
+
+    mapping = {
+        "journey_milestones": "journeyMilestones",
+        "analysis_progress": "analysisProgress",
+        "product_discovery": "productDiscovery",
+        "community_engagement": "communityEngagement",
+    }
+    return mapping.get(value, value)
+
+
+def _map_difficulty_to_flutter(value):
+    try:
+        if isinstance(value, AchievementDifficulty):
+            return value.value
+    except Exception:
+        pass
+    # Already a string (starter|easy|medium|hard)
+    return value
+
+
 @router.get("/", response_model=Dict[str, Any])
 async def get_user_achievements(
     current_user: UserModel = Depends(get_current_user),
@@ -81,8 +109,9 @@ async def get_user_achievements(
                 "description": achievement.get("description"),
                 "badgePath": f"assets/Achievement badges/{achievement.get('title', '')}.png",
                 "backgroundBadgePath": f"assets/Achievement badges/with bg/{achievement.get('title', '')} bg.png",
-                "category": achievement.get("category"),
-                "difficulty": achievement.get("difficulty"),
+                # Ensure enums are mapped to Flutter's expected camelCase strings
+                "category": _map_category_to_flutter(achievement.get("category")),
+                "difficulty": _map_difficulty_to_flutter(achievement.get("difficulty")),
                 "points": achievement.get("points"),
                 "isUnlocked": achievement.get("is_unlocked", False),
                 "progress": achievement.get("progress", 0.0),
@@ -124,15 +153,30 @@ async def get_achievement_definitions(
     difficulty: Optional[AchievementDifficulty] = None
 ):
     """Get all achievement definitions (static data)"""
-    definitions = [a.dict() for a in ACHIEVEMENT_DEFINITIONS]
+    # Map definitions to Flutter-friendly payload to avoid enum mismatches
+    definitions = []
+    for d in ACHIEVEMENT_DEFINITIONS:
+        data = d.dict()
+        definitions.append({
+            "id": data.get("achievement_id"),
+            "title": data.get("title"),
+            "description": data.get("description"),
+            "badgePath": data.get("badge_path"),
+            "backgroundBadgePath": data.get("background_badge_path"),
+            "category": _map_category_to_flutter(data.get("category")),
+            "difficulty": _map_difficulty_to_flutter(data.get("difficulty")),
+            "points": data.get("points"),
+            "triggerCondition": data.get("trigger_condition", {}),
+            "emoji": data.get("emoji"),
+        })
     
     # Filter by category
     if category:
-        definitions = [d for d in definitions if d.get("category") == category]
+        definitions = [d for d in definitions if d.get("category") == _map_category_to_flutter(category)]
     
     # Filter by difficulty
     if difficulty:
-        definitions = [d for d in definitions if d.get("difficulty") == difficulty]
+        definitions = [d for d in definitions if d.get("difficulty") == _map_difficulty_to_flutter(difficulty)]
     
     return definitions
 
