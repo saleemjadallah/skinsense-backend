@@ -159,6 +159,48 @@ class PerplexityRecommendationService:
                 product['product_url'] = generated_url
                 product['affiliate_link'] = generated_url
                 
+                # --- PRICE NORMALIZATION: always provide priceRange and currentPrice ---
+                try:
+                    # Normalize priceRange (prefer existing camelCase; fallback to snake_case or 'price' text)
+                    if not product.get('priceRange') or not isinstance(product.get('priceRange'), str):
+                        fallback_range = product.get('price_range') or product.get('price')
+                        if isinstance(fallback_range, (int, float)):
+                            product['priceRange'] = f"${int(fallback_range)}"
+                        elif isinstance(fallback_range, str) and fallback_range.strip():
+                            product['priceRange'] = fallback_range.strip()
+                        else:
+                            # Last resort default so UI never sees null
+                            product['priceRange'] = "$15-30"
+                    
+                    # Normalize currentPrice (number). Use existing numeric, or parse from price strings/ranges
+                    if product.get('currentPrice') is None:
+                        raw_numeric = product.get('current_price')
+                        if isinstance(raw_numeric, (int, float)):
+                            product['currentPrice'] = float(raw_numeric)
+                        elif isinstance(raw_numeric, str):
+                            m = re.search(r'[\d.]+', raw_numeric)
+                            if m:
+                                try:
+                                    product['currentPrice'] = float(m.group())
+                                except Exception:
+                                    pass
+                        # Parse from priceRange if still missing
+                        if product.get('currentPrice') is None:
+                            rng = product.get('priceRange') or product.get('price_range') or product.get('price') or ''
+                            if isinstance(rng, (int, float)):
+                                product['currentPrice'] = float(rng)
+                            elif isinstance(rng, str):
+                                m2 = re.search(r'\$([\d.]+)', rng) or re.search(r'[\d.]+', rng)
+                                if m2:
+                                    try:
+                                        product['currentPrice'] = float(m2.group(1) if m2.lastindex else m2.group(0))
+                                    except Exception:
+                                        pass
+                except Exception:
+                    # Never let price normalization break the response
+                    if not product.get('priceRange'):
+                        product['priceRange'] = "$15-30"
+
                 # Ensure retailer is set
                 if not product.get('retailer') and product.get('availability'):
                     # Try to detect retailer from availability data
