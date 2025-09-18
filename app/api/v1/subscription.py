@@ -41,7 +41,7 @@ async def upgrade_to_premium(
     db.users.update_one(
         {"_id": current_user.id},
         {"$set": {
-            "subscription": updated_user.subscription.dict(),
+            "subscription": updated_user.subscription.model_dump(),
             "updated_at": datetime.utcnow()
         }}
     )
@@ -67,7 +67,7 @@ async def downgrade_to_free(
     db.users.update_one(
         {"_id": current_user.id},
         {"$set": {
-            "subscription": updated_user.subscription.dict(),
+            "subscription": updated_user.subscription.model_dump(),
             "updated_at": datetime.utcnow()
         }}
     )

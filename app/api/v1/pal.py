@@ -69,10 +69,10 @@ async def chat_with_pal(
         
         # Increment Pal usage
         SubscriptionService.increment_pal_usage(current_user)
-        # Update user in database
+        # Update user in database with model_dump() for Pydantic v2
         db.users.update_one(
             {"_id": current_user.id},
-            {"$set": {"subscription": current_user.subscription.dict()}}
+            {"$set": {"subscription": current_user.subscription.model_dump()}}
         )
         
         # Initialize service

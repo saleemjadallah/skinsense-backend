@@ -80,11 +80,11 @@ async def register(
         email=new_user.email,
         username=new_user.username,
         name=new_user.name,
-        onboarding=OnboardingPreferencesResponse(**new_user.onboarding.dict()),
-        profile=SkinProfileResponse(**new_user.profile.dict()),
-        product_preferences=ProductPreferencesResponse(**new_user.product_preferences.dict()),
-        subscription=SubscriptionInfoResponse(**new_user.subscription.dict()),
-        privacy_settings=PrivacySettingsResponse(**new_user.privacy_settings.dict()),
+        onboarding=OnboardingPreferencesResponse(**new_user.onboarding.model_dump()),
+        profile=SkinProfileResponse(**new_user.profile.model_dump()),
+        product_preferences=ProductPreferencesResponse(**new_user.product_preferences.model_dump()),
+        subscription=SubscriptionInfoResponse(**new_user.subscription.model_dump()),
+        privacy_settings=PrivacySettingsResponse(**new_user.privacy_settings.model_dump()),
         created_at=new_user.created_at,
         last_login=None,
         is_active=new_user.is_active,
@@ -283,7 +283,7 @@ async def google_sign_in(
             )
             db.users.update_one(
                 {"_id": existing_user["_id"]},
-                {"$push": {"social_providers": provider.dict()}}
+                {"$push": {"social_providers": provider.model_dump()}}
             )
         
         user_id = str(existing_user["_id"])
@@ -319,7 +319,7 @@ async def google_sign_in(
         # Insert user
         result = db.users.insert_one(new_user.dict(by_alias=True))
         user_id = str(result.inserted_id)
-        existing_user = new_user.dict()
+        existing_user = new_user.model_dump()
         existing_user["_id"] = result.inserted_id
     
     # Create tokens
@@ -419,7 +419,7 @@ async def apple_sign_in(
                 db.users.update_one(
                     {"_id": existing_user["_id"]},
                     {
-                        "$push": {"social_providers": provider.dict()},
+                        "$push": {"social_providers": provider.model_dump()},
                         "$set": {"last_login": datetime.utcnow()}
                     }
                 )
@@ -466,7 +466,7 @@ async def apple_sign_in(
                 # Insert user
                 result = db.users.insert_one(new_user.dict(by_alias=True))
                 user_id = str(result.inserted_id)
-                existing_user = new_user.dict()
+                existing_user = new_user.model_dump()
                 existing_user["_id"] = result.inserted_id
         else:
             # No email and no existing user - create new user with Apple ID only
@@ -491,7 +491,7 @@ async def apple_sign_in(
             
             result = db.users.insert_one(new_user.dict(by_alias=True))
             user_id = str(result.inserted_id)
-            existing_user = new_user.dict()
+            existing_user = new_user.model_dump()
             existing_user["_id"] = result.inserted_id
     
     # Create tokens

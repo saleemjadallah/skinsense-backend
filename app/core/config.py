@@ -7,7 +7,7 @@ load_dotenv()
 
 class Settings(BaseSettings):
     # Application Settings
-    APP_NAME: str = "SkinSense AI API"
+    APP_NAME: str = "SkinSense AI"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = True
     BASE_URL: str = os.getenv("BASE_URL", "https://api.skinsense.app")

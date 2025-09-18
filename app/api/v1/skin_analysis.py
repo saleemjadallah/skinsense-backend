@@ -94,10 +94,10 @@ async def create_skin_analysis(
     
     # Increment scan usage
     SubscriptionService.increment_scan_usage(current_user)
-    # Update user in database
+    # Update user in database with model_dump() for Pydantic v2
     db.users.update_one(
         {"_id": current_user.id},
-        {"$set": {"subscription": current_user.subscription.dict()}}
+        {"$set": {"subscription": current_user.subscription.model_dump()}}
     )
     
     try:
@@ -741,6 +741,35 @@ async def save_orbo_sdk_result(
     logger.debug(f"ORBO data received: {json.dumps(orbo_data, default=str)}")
     
     try:
+        # Enforce subscription scan limits for ORBO SDK scans
+        scan_status = SubscriptionService.check_scan_limit(current_user)
+        if not scan_status.get("allowed"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "message": "Monthly scan limit reached",
+                    "remaining_scans": 0,
+                    "reset_date": scan_status.get("reset_date").isoformat() if scan_status.get("reset_date") else None,
+                    "upgrade_prompt": "Upgrade to Premium for unlimited skin scans!",
+                },
+            )
+        # Increment usage and persist immediately so the UI can reflect it
+        SubscriptionService.increment_scan_usage(current_user)
+
+        # Log before and after for debugging
+        logger.info(f"User {current_user.id} scan count before: {current_user.subscription.usage.monthly_scans_used}")
+
+        # Use model_dump() instead of deprecated dict() for Pydantic v2
+        subscription_data = current_user.subscription.model_dump()
+
+        result = db.users.update_one(
+            {"_id": current_user.id},
+            {"$set": {"subscription": subscription_data}},
+        )
+
+        logger.info(f"Update result - matched: {result.matched_count}, modified: {result.modified_count}")
+        logger.info(f"Subscription data being saved: monthly_scans_used = {subscription_data['usage']['monthly_scans_used']}")
+
         # Handle both wrapped and direct formats for extracting images and annotations
         if 'raw_response' in orbo_data:
             # Wrapped format from mobile SDK
