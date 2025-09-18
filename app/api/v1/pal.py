@@ -68,12 +68,18 @@ async def chat_with_pal(
             )
         
         # Increment Pal usage
+        logger.info(f"User {current_user.id} Pal questions before: {current_user.subscription.usage.daily_pal_questions_used}")
         SubscriptionService.increment_pal_usage(current_user)
+        logger.info(f"User {current_user.id} Pal questions after increment: {current_user.subscription.usage.daily_pal_questions_used}")
+
         # Update user in database with model_dump() for Pydantic v2
-        db.users.update_one(
+        subscription_data = current_user.subscription.model_dump()
+        result = db.users.update_one(
             {"_id": current_user.id},
-            {"$set": {"subscription": current_user.subscription.model_dump()}}
+            {"$set": {"subscription": subscription_data}}
         )
+        logger.info(f"Pal usage update result - matched: {result.matched_count}, modified: {result.modified_count}")
+        logger.info(f"Pal subscription data saved: daily_pal_questions_used = {subscription_data['usage']['daily_pal_questions_used']}")
         
         # Initialize service
         pal_service = PalService()
