@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request
 from fastapi.security import HTTPBearer
 from pymongo.database import Database
 from datetime import datetime, timedelta
@@ -12,9 +12,9 @@ from app.schemas.user import (
 )
 from app.models.user import UserModel, SocialAuthProvider
 from app.core.security import (
-    verify_password, 
-    get_password_hash, 
-    create_access_token, 
+    verify_password,
+    get_password_hash,
+    create_access_token,
     create_refresh_token,
     verify_token,
     create_verification_token,
@@ -22,13 +22,16 @@ from app.core.security import (
 )
 from app.services.social_auth_service import social_auth_service
 from app.services.email_service import email_service
+from app.core.rate_limit import auth_rate_limit, strict_rate_limit
 import secrets
 
 router = APIRouter()
 security = HTTPBearer()
 
 @router.post("/register", response_model=AuthResponse)
+@auth_rate_limit
 async def register(
+    request: Request,
     user_data: UserCreate,
     background_tasks: BackgroundTasks,
     db: Database = Depends(get_database)
@@ -100,7 +103,9 @@ async def register(
     )
 
 @router.post("/login", response_model=AuthResponse)
+@auth_rate_limit
 async def login(
+    request: Request,
     user_credentials: UserLogin,
     db: Database = Depends(get_database)
 ):
@@ -618,7 +623,9 @@ async def resend_otp(
 
 
 @router.post("/forgot-password")
+@strict_rate_limit
 async def forgot_password(
+    req: Request,
     request: ForgotPasswordRequest,
     db: Database = Depends(get_database)
 ):

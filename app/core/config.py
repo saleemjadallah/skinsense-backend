@@ -9,11 +9,11 @@ class Settings(BaseSettings):
     # Application Settings
     APP_NAME: str = "SkinSense AI"
     APP_VERSION: str = "1.0.0"
-    DEBUG: bool = True
+    DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
     BASE_URL: str = os.getenv("BASE_URL", "https://api.skinsense.app")
-    
+
     # Security
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-here-change-in-production")
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
@@ -84,3 +84,12 @@ class Settings(BaseSettings):
         extra = "ignore"  # Allow extra fields from .env file
 
 settings = Settings()
+
+# Validate critical settings for production
+if not settings.DEBUG:
+    if not settings.SECRET_KEY:
+        raise ValueError("SECRET_KEY must be set in production environment")
+    if settings.SECRET_KEY == "your-secret-key-here-change-in-production":
+        raise ValueError("Default SECRET_KEY detected in production - please set a secure key")
+    if len(settings.SECRET_KEY) < 32:
+        raise ValueError("SECRET_KEY should be at least 32 characters for security")

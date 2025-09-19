@@ -68,9 +68,17 @@ app = FastAPI(
 # instrumentator.instrument(app).expose(app, endpoint="/metrics")
 
 # CORS middleware
-# CORS configuration - Allow all origins for mobile apps
-# Mobile apps (iOS/Android) don't send Origin headers like web apps
-cors_origins = ["*"]  # Allow all origins for mobile app compatibility
+# CORS configuration - Use environment-based configuration for security
+# For mobile apps, consider using a proxy or API gateway instead of wildcard
+cors_origins = os.getenv("BACKEND_CORS_ORIGINS", "").split(",") if os.getenv("BACKEND_CORS_ORIGINS") else []
+
+# In development, use the configured origins from settings
+if settings.DEBUG and not cors_origins:
+    cors_origins = settings.BACKEND_CORS_ORIGINS
+# In production, require explicit CORS configuration
+elif not cors_origins:
+    logger.warning("CORS origins not configured - defaulting to restrictive policy")
+    cors_origins = ["https://app.skinsense.app", "https://www.skinsense.app"]
 
 app.add_middleware(
     CORSMiddleware,
