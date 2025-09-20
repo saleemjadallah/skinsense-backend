@@ -34,17 +34,35 @@ def get_user_profile(user_id: Any, db: Database, is_anonymous: bool = False) -> 
             expert_title=None,
             is_anonymous=True
         )
-    
+
     user = db.users.find_one({"_id": user_id})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
+
+    # Generate username if missing (for backward compatibility)
+    username = user.get("username")
+    if not username:
+        # Try to use name first, then email prefix
+        if user.get("name"):
+            username = user["name"].replace(" ", "_").lower()
+        elif user.get("email"):
+            username = user["email"].split("@")[0]
+        else:
+            username = f"user_{str(user_id)[-8:]}"
+
+        # Update the user document with the generated username
+        db.users.update_one(
+            {"_id": user_id},
+            {"$set": {"username": username}}
+        )
+        logger.info(f"Generated username '{username}' for user {user_id}")
+
     # Check if user is an expert
     expert = db.expert_profiles.find_one({"user_id": user_id})
-    
+
     return UserProfile(
         id=str(user_id),
-        username=user.get("username", "Anonymous"),
+        username=username,
         profile_image=user.get("profile_image"),
         is_expert=expert is not None,
         expert_title=expert.get("title") if expert else None,
@@ -83,6 +101,9 @@ async def create_post_json(
         )
     
     try:
+        # Log incoming post data
+        logger.info(f"Creating post - User: {current_user.id}, Content: '{post_data.content[:50]}...', Anonymous: {post_data.is_anonymous}")
+
         # Create post document
         post = CommunityPost(
             user_id=current_user.id,
@@ -92,14 +113,18 @@ async def create_post_json(
             post_type=post_data.post_type,
             is_anonymous=post_data.is_anonymous
         )
-        
+
         # Insert into database
         result = db.community_posts.insert_one(post.model_dump(by_alias=True))
         post.id = result.inserted_id
-        
+
+        logger.info(f"Post created with ID: {post.id}")
+
         # Get user profile (handle anonymous)
         user_profile = get_user_profile(current_user.id, db, is_anonymous=post.is_anonymous)
-        
+
+        logger.info(f"User profile retrieved - Username: {user_profile.username}, Anonymous: {user_profile.is_anonymous}")
+
         # Return response
         return PostResponse(
             id=str(post.id),
@@ -146,13 +171,16 @@ async def create_post(
     try:
         # Parse is_anonymous from string to boolean
         is_anonymous_bool = is_anonymous.lower() == "true"
-        
+
+        # Log incoming form data
+        logger.info(f"Creating post (FormData) - User: {current_user.id}, Content: '{content[:50]}...', Anonymous: {is_anonymous_bool}")
+
         # Parse tags if they come as a single string
         if isinstance(tags, str):
             tags = [tag.strip() for tag in tags.split(',') if tag.strip()]
         elif tags is None:
             tags = []
-        
+
         # Handle image upload if provided
         image_url = None
         if images and len(images) > 0 and images[0].filename:
@@ -164,7 +192,8 @@ async def create_post(
                 image.filename,
                 f"community/{current_user.id}"
             )
-        
+            logger.info(f"Image uploaded to: {image_url}")
+
         # Create post document
         post = CommunityPost(
             user_id=current_user.id,
@@ -174,14 +203,18 @@ async def create_post(
             post_type=post_type,
             is_anonymous=is_anonymous_bool
         )
-        
+
         # Insert into database
         result = db.community_posts.insert_one(post.model_dump(by_alias=True))
         post.id = result.inserted_id
-        
+
+        logger.info(f"Post created with ID: {post.id}")
+
         # Get user profile (handle anonymous)
         user_profile = get_user_profile(current_user.id, db, is_anonymous=post.is_anonymous)
-        
+
+        logger.info(f"User profile retrieved - Username: {user_profile.username}, Anonymous: {user_profile.is_anonymous}")
+
         # Return response
         return PostResponse(
             id=str(post.id),
@@ -262,13 +295,16 @@ async def get_posts(
                     is_edited=comment.get("is_edited", False)
                 ))
             
+            # Log post data being returned
+            logger.debug(f"Returning post {post['_id']}: username='{user_profile.username}', content='{post.get('content', '')[:50]}...', anonymous={post.get('is_anonymous', False)}")
+
             post_responses.append(PostResponse(
                 id=str(post["_id"]),
                 user=user_profile,
-                content=post["content"],
+                content=post.get("content", ""),  # Ensure content is never None
                 image_url=post.get("image_url"),
                 tags=post.get("tags", []),
-                post_type=post["post_type"],
+                post_type=post.get("post_type", "post"),
                 likes_count=len(post.get("likes", [])),
                 comments_count=post.get("comments_count", 0),
                 saves_count=len(post.get("saves", [])),
