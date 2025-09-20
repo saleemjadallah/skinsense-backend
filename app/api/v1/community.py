@@ -39,13 +39,16 @@ def get_user_profile(user_id: Any, db: Database, is_anonymous: bool = False) -> 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Generate username if missing (for backward compatibility)
+    # Use existing name or username (prefer name for display)
     username = user.get("username")
-    if not username:
-        # Try to use name first, then email prefix
-        if user.get("name"):
-            username = user["name"].replace(" ", "_").lower()
-        elif user.get("email"):
+    display_name = user.get("name")
+
+    # Use name if available, otherwise fall back to username or generate one
+    if display_name:
+        username = display_name  # Use the actual name for display
+    elif not username:
+        # Generate username from email if both name and username are missing
+        if user.get("email"):
             username = user["email"].split("@")[0]
         else:
             username = f"user_{str(user_id)[-8:]}"
