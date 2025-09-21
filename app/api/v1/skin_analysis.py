@@ -375,7 +375,9 @@ async def get_user_analyses(
             thumbnail_url=analysis.get("thumbnail_url"),
             analysis_complete=bool(analysis.get("analysis_data")),
             created_at=analysis["created_at"],
-            is_baseline=analysis.get("is_baseline", False)
+            is_baseline=analysis.get("is_baseline", False),
+            orbo_response=analysis.get("orbo_response"),  # Include ORBO scores
+            ai_feedback=analysis.get("ai_feedback")  # Include AI feedback
         )
         for analysis in analyses
     ]
@@ -388,9 +390,11 @@ async def get_analysis_detail(
 ):
     """Get detailed analysis results"""
     
+    # CRITICAL FIX: Convert user_id to ObjectId for query
+    user_oid = ObjectId(str(current_user.id))
     analysis = db.skin_analyses.find_one({
         "_id": ObjectId(analysis_id),
-        "user_id": current_user.id
+        "user_id": {"$in": [user_oid, str(current_user.id)]}
     })
     
     if not analysis:
@@ -424,9 +428,11 @@ async def get_analysis_recommendations(
     """Get product recommendations based on completed skin analysis"""
     
     # Get the analysis
+    # CRITICAL FIX: Convert user_id to ObjectId for query
+    user_oid = ObjectId(str(current_user.id))
     analysis = db.skin_analyses.find_one({
         "_id": ObjectId(analysis_id),
-        "user_id": current_user.id
+        "user_id": {"$in": [user_oid, str(current_user.id)]}
     })
     
     if not analysis:
@@ -557,7 +563,7 @@ async def complete_ai_pipeline(
     if current_user.subscription.tier == "basic":
         start_of_month = get_utc_now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         monthly_count = db.skin_analyses.count_documents({
-            "user_id": current_user.id,
+            "user_id": ObjectId(str(current_user.id)),
             "created_at": {"$gte": start_of_month}
         })
         
@@ -1158,7 +1164,9 @@ async def run_ai_for_analysis(
     """Run AI feedback and recommendations for an existing ORBO analysis."""
     logger.info(f"Running AI pipeline for analysis {analysis_id}, user {current_user.id}")
     
-    analysis = db.skin_analyses.find_one({"_id": ObjectId(analysis_id), "user_id": current_user.id})
+    # CRITICAL FIX: Convert user_id to ObjectId for query
+    user_oid = ObjectId(str(current_user.id))
+    analysis = db.skin_analyses.find_one({"_id": ObjectId(analysis_id), "user_id": {"$in": [user_oid, str(current_user.id)]}})
     if not analysis:
         raise HTTPException(status_code=404, detail="Analysis not found")
     
@@ -1720,12 +1728,12 @@ async def compare_analyses(
     # Fetch both analyses
     current_analysis = db.skin_analyses.find_one({
         "_id": ObjectId(comparison_request.current_analysis_id),
-        "user_id": current_user.id
+        "user_id": {"$in": [ObjectId(str(current_user.id)), str(current_user.id)]}
     })
     
     previous_analysis = db.skin_analyses.find_one({
         "_id": ObjectId(comparison_request.previous_analysis_id),
-        "user_id": current_user.id
+        "user_id": {"$in": [ObjectId(str(current_user.id)), str(current_user.id)]}
     })
     
     if not current_analysis or not previous_analysis:

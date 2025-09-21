@@ -22,6 +22,8 @@ class SkinAnalysisResponse(BaseModel):
     analysis_complete: bool
     created_at: datetime
     is_baseline: bool
+    orbo_response: Optional[Dict[str, Any]] = None  # Include ORBO scores
+    ai_feedback: Optional[str] = None  # Include AI feedback
 
 class SkinAnalysisDetail(BaseModel):
     id: str
