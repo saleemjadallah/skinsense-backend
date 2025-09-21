@@ -228,9 +228,9 @@ async def get_progress_summary_async(user_id: str, db) -> Dict[str, Any]:
             logger.error(f"Invalid user_id format: {user_id}")
             return get_default_progress_summary()
 
-        # Get latest analysis with single query
+        # Get latest analysis with single query - check both user_id formats
         latest_analysis = db.skin_analyses.find_one(
-            {"user_id": user_oid},
+            {"user_id": {"$in": [user_oid, user_id]}},
             {"orbo_response": 1, "created_at": 1, "status": 1},
             sort=[("created_at", -1)]
         )

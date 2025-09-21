@@ -232,10 +232,10 @@ class ProgressService:
     ) -> Dict[str, Any]:
         """Generate comprehensive progress summary with AI insights"""
         
-        # Get all analyses in period
+        # Get all analyses in period - check both user_id formats
         start_date = datetime.utcnow() - timedelta(days=period_days)
         analyses = list(db.skin_analyses.find({
-            "user_id": user_id,
+            "user_id": {"$in": [user_id, str(user_id)]},
             "status": {"$in": ["completed", "awaiting_ai"]},
             "created_at": {"$gte": start_date}
         }).sort("created_at", 1))
