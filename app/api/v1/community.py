@@ -117,8 +117,9 @@ async def create_post_json(
             is_anonymous=post_data.is_anonymous
         )
 
-        # Insert into database
-        result = db.community_posts.insert_one(post.model_dump(by_alias=True))
+        # Insert into database, letting MongoDB generate the _id
+        post_document = post.model_dump(by_alias=True, exclude_none=True)
+        result = db.community_posts.insert_one(post_document)
         post.id = result.inserted_id
 
         logger.info(f"Post created with ID: {post.id}")
@@ -207,8 +208,9 @@ async def create_post(
             is_anonymous=is_anonymous_bool
         )
 
-        # Insert into database
-        result = db.community_posts.insert_one(post.model_dump(by_alias=True))
+        # Insert into database, letting MongoDB generate the _id
+        post_document = post.model_dump(by_alias=True, exclude_none=True)
+        result = db.community_posts.insert_one(post_document)
         post.id = result.inserted_id
 
         logger.info(f"Post created with ID: {post.id}")
@@ -603,7 +605,8 @@ async def create_comment(
         )
         
         # Insert comment
-        result = db.comments.insert_one(comment.model_dump(by_alias=True))
+        comment_document = comment.model_dump(by_alias=True, exclude_none=True)
+        result = db.comments.insert_one(comment_document)
         comment.id = result.inserted_id
         
         # Update post comment count
