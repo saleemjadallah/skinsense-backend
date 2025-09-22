@@ -373,11 +373,16 @@ async def get_user_analyses(
             user_id=str(analysis["user_id"]),
             image_url=analysis["image_url"],
             thumbnail_url=analysis.get("thumbnail_url"),
-            analysis_complete=bool(analysis.get("analysis_data")),
+            analysis_complete=bool(analysis.get("analysis_data") or analysis.get("orbo_response")),
             created_at=analysis["created_at"],
             is_baseline=analysis.get("is_baseline", False),
             orbo_response=analysis.get("orbo_response"),  # Include ORBO scores
-            ai_feedback=analysis.get("ai_feedback")  # Include AI feedback
+            # Convert ai_feedback to string if it's a dict
+            ai_feedback=(
+                analysis.get("ai_feedback").get("summary")
+                if isinstance(analysis.get("ai_feedback"), dict)
+                else analysis.get("ai_feedback")
+            )
         )
         for analysis in analyses
     ]
