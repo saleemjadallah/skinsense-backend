@@ -333,8 +333,10 @@ class UnifiedRecommendationService:
         db: Database
     ) -> Optional[Dict[str, Any]]:
         """Get user's most recent skin analysis"""
+        # Include both completed AND awaiting_ai statuses
+        # awaiting_ai means ORBO analysis is done but AI feedback is pending
         return db.skin_analyses.find_one(
-            {"user_id": user_id, "status": "completed"},
+            {"user_id": user_id, "status": {"$in": ["completed", "awaiting_ai"]}},
             sort=[("created_at", -1)]
         )
     
@@ -345,10 +347,11 @@ class UnifiedRecommendationService:
         limit: int = 3
     ) -> List[Dict[str, Any]]:
         """Get user's recent skin analyses"""
+        # Include both completed AND awaiting_ai statuses
         cursor = db.skin_analyses.find(
-            {"user_id": user_id, "status": "completed"}
+            {"user_id": user_id, "status": {"$in": ["completed", "awaiting_ai"]}}
         ).sort("created_at", -1).limit(limit)
-        
+
         return list(cursor)
     
     def _get_analyses_in_period(
@@ -359,15 +362,17 @@ class UnifiedRecommendationService:
     ) -> List[Dict[str, Any]]:
         """Get analyses within specified period"""
         from datetime import datetime, timedelta
-        
+
         start_date = datetime.utcnow() - timedelta(days=period_days)
-        
+
+        # Include both completed AND awaiting_ai statuses
+        # awaiting_ai means ORBO analysis is done but AI feedback is pending
         cursor = db.skin_analyses.find({
             "user_id": user_id,
-            "status": "completed",
+            "status": {"$in": ["completed", "awaiting_ai"]},
             "created_at": {"$gte": start_date}
         }).sort("created_at", 1)
-        
+
         return list(cursor)
     
     def _get_analysis_by_id(

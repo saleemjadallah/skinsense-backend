@@ -108,8 +108,10 @@ class InsightsService:
             return None
         
         # Get latest skin analysis
+        # Include both completed AND awaiting_ai statuses
+        # awaiting_ai means ORBO analysis is done but AI feedback is pending
         latest_analysis = self.db.skin_analyses.find_one(
-            {"user_id": user_oid, "status": "completed"},
+            {"user_id": user_oid, "status": {"$in": ["completed", "awaiting_ai"]}},
             sort=[("created_at", -1)]
         )
         
