@@ -105,7 +105,7 @@ async def batch_routine_completions(
                     continue
                 
                 # Get the routine
-                routine = await db.routines.find_one({
+                routine = db.routines.find_one({
                     '_id': completion.routine_id,
                     'user_id': str(current_user.id)
                 })
@@ -118,7 +118,7 @@ async def batch_routine_completions(
                     continue
                 
                 # Check if this completion already exists (deduplication)
-                existing = await db.routine_completions.find_one({
+                existing = db.routine_completions.find_one({
                     'routine_id': completion.routine_id,
                     'user_id': str(current_user.id),
                     'completed_at': {
@@ -148,8 +148,8 @@ async def batch_routine_completions(
                     'skin_feel': completion.skin_feel,
                     'created_at': get_utc_now()
                 }
-                
-                await db.routine_completions.insert_one(completion_doc)
+
+                db.routine_completions.insert_one(completion_doc)
                 
                 # Update routine stats
                 last_completed = routine.get('last_completed')
@@ -167,7 +167,7 @@ async def batch_routine_completions(
                     streak = 1
                 
                 # Update routine
-                await db.routines.update_one(
+                db.routines.update_one(
                     {'_id': completion.routine_id},
                     {
                         '$set': {
@@ -180,7 +180,7 @@ async def batch_routine_completions(
                 )
                 
                 # Update goals related to this routine
-                await _update_goals_from_routine(
+                _update_goals_from_routine(
                     completion.routine_id,
                     str(current_user.id),
                     db
@@ -244,7 +244,7 @@ async def batch_goal_progress(
         for goal_id, updates in updates_by_goal.items():
             try:
                 # Get the goal
-                goal = await db.goals.find_one({
+                goal = db.goals.find_one({
                     '_id': goal_id,
                     'user_id': str(current_user.id)
                 })
@@ -277,7 +277,7 @@ async def batch_goal_progress(
                         'metadata': update.metadata,
                         'created_at': get_utc_now()
                     }
-                    await db.goal_progress.insert_one(progress_doc)
+                    db.goal_progress.insert_one(progress_doc)
                 
                 # Calculate progress percentage
                 baseline_value = goal.get('baseline_value', 0)
@@ -315,8 +315,8 @@ async def batch_goal_progress(
                 if progress_percentage >= 100 and goal.get('status') == 'active':
                     update_doc['status'] = 'completed'
                     update_doc['completed_at'] = get_utc_now()
-                
-                await db.goals.update_one(
+
+                db.goals.update_one(
                     {'_id': goal_id},
                     {'$set': update_doc}
                 )
@@ -386,11 +386,11 @@ async def batch_analytics(
         
         # Bulk insert
         if documents:
-            result = await db.analytics_events.insert_many(documents)
+            result = db.analytics_events.insert_many(documents)
             successful = len(result.inserted_ids)
-            
+
             # Update user engagement metrics
-            await _update_user_engagement(str(current_user.id), events, db)
+            _update_user_engagement(str(current_user.id), events, db)
             
             results.append({
                 'status': 'success',
@@ -438,7 +438,7 @@ async def batch_reminder_actions(
     for action in actions:
         try:
             # Get the reminder
-            reminder = await db.reminders.find_one({
+            reminder = db.reminders.find_one({
                 '_id': action.reminder_id,
                 'user_id': str(current_user.id)
             })
@@ -476,7 +476,7 @@ async def batch_reminder_actions(
                 }
             
             # Update reminder
-            await db.reminders.update_one(
+            db.reminders.update_one(
                 {'_id': action.reminder_id},
                 {'$set': update_doc}
             )
@@ -489,7 +489,7 @@ async def batch_reminder_actions(
                 'action_at': action.action_at,
                 'created_at': get_utc_now()
             }
-            await db.reminder_history.insert_one(history_doc)
+            db.reminder_history.insert_one(history_doc)
             
             results.append({
                 'reminder_id': action.reminder_id,
@@ -548,11 +548,11 @@ async def batch_product_interactions(
         
         # Bulk insert
         if documents:
-            result = await db.product_interactions.insert_many(documents)
+            result = db.product_interactions.insert_many(documents)
             successful = len(result.inserted_ids)
-            
+
             # Update user product preferences
-            await _update_user_product_preferences(
+            _update_user_product_preferences(
                 str(current_user.id),
                 interactions,
                 db
@@ -587,7 +587,7 @@ async def batch_product_interactions(
 
 # Helper functions
 
-async def _update_goals_from_routine(
+def _update_goals_from_routine(
     routine_id: str,
     user_id: str,
     db: Database
@@ -595,22 +595,22 @@ async def _update_goals_from_routine(
     """Update goals based on routine completion"""
     try:
         # Find goals related to consistency
-        consistency_goals = await db.goals.find({
+        consistency_goals = list(db.goals.find({
             'user_id': user_id,
             'metric_type': 'consistency',
             'status': 'active'
-        }).to_list(None)
+        }))
         
         for goal in consistency_goals:
             # Get routine completion count for the period
             start_date = goal.get('start_date', datetime.min)
-            completions = await db.routine_completions.count_documents({
+            completions = db.routine_completions.count_documents({
                 'user_id': user_id,
                 'completed_at': {'$gte': start_date}
             })
             
             # Update goal progress
-            await db.goals.update_one(
+            db.goals.update_one(
                 {'_id': goal['_id']},
                 {
                     '$set': {
@@ -623,7 +623,7 @@ async def _update_goals_from_routine(
         logger.error(f"Error updating goals from routine: {str(e)}")
 
 
-async def _update_user_engagement(
+def _update_user_engagement(
     user_id: str,
     events: List[AnalyticsEventBatch],
     db: Database
@@ -644,8 +644,8 @@ async def _update_user_engagement(
             'total_events': len(events),
             'updated_at': get_utc_now()
         }
-        
-        await db.user_engagement.update_one(
+
+        db.user_engagement.update_one(
             {
                 'user_id': user_id,
                 'date': engagement_doc['date']
@@ -664,7 +664,7 @@ async def _update_user_engagement(
         logger.error(f"Error updating user engagement: {str(e)}")
 
 
-async def _update_user_product_preferences(
+def _update_user_product_preferences(
     user_id: str,
     interactions: List[ProductInteractionBatch],
     db: Database
@@ -695,8 +695,8 @@ async def _update_user_product_preferences(
         
         if update_doc:
             update_doc['$set'] = {'preferences_updated_at': get_utc_now()}
-            
-            await db.user_product_preferences.update_one(
+
+            db.user_product_preferences.update_one(
                 {'user_id': user_id},
                 update_doc,
                 upsert=True

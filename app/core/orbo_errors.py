@@ -277,7 +277,7 @@ class OrboErrorMonitor:
     def __init__(self, db):
         self.db = db
     
-    async def log_error(
+    def log_error(
         self,
         user_id: str,
         error_type: OrboErrorType,
@@ -296,13 +296,13 @@ class OrboErrorMonitor:
             'app_version': error_details.get('app_version'),
             'device_info': error_details.get('device_info')
         }
-        
+
         try:
-            await self.db.orbo_errors.insert_one(error_log)
+            self.db.orbo_errors.insert_one(error_log)
         except Exception as e:
             logger.error(f"Failed to log ORBO error to database: {e}")
     
-    async def get_error_statistics(
+    def get_error_statistics(
         self,
         start_date: datetime,
         end_date: datetime
@@ -335,8 +335,8 @@ class OrboErrorMonitor:
                 }
             }
         ]
-        
-        results = await self.db.orbo_errors.aggregate(pipeline).to_list(None)
+
+        results = list(self.db.orbo_errors.aggregate(pipeline))
         
         return {
             'period': {
