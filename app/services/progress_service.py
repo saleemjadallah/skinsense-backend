@@ -303,20 +303,34 @@ class ProgressService:
     def _extract_metrics(self, analysis: Dict[str, Any]) -> Dict[str, float]:
         """Extract ORBO metrics from analysis data"""
         metrics = {}
-        
-        # Try new ORBO structure first
+
+        # Try new ORBO structure first (proper nesting)
         if "orbo_response" in analysis and analysis["orbo_response"]:
-            orbo_metrics = analysis["orbo_response"].get("metrics", {})
-            for key in self.METRIC_INFO.keys():
-                if key in orbo_metrics:
-                    metrics[key] = float(orbo_metrics[key])
-        
+            orbo_resp = analysis["orbo_response"]
+
+            # Check if metrics are properly nested under 'metrics' key
+            if isinstance(orbo_resp, dict) and "metrics" in orbo_resp:
+                orbo_metrics = orbo_resp["metrics"]
+                for key in self.METRIC_INFO.keys():
+                    if key in orbo_metrics:
+                        metrics[key] = float(orbo_metrics[key])
+
+            # Fallback: Check if metrics are at the top level of orbo_response (wrong structure)
+            elif isinstance(orbo_resp, dict):
+                for key in self.METRIC_INFO.keys():
+                    if key in orbo_resp:
+                        metrics[key] = float(orbo_resp[key])
+                if metrics:  # If we found metrics at wrong level
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.warning(f"Found metrics at wrong level in analysis {analysis.get('_id')}")
+
         # Fallback to analysis_data
         elif "analysis_data" in analysis:
             for key in self.METRIC_INFO.keys():
                 if key in analysis["analysis_data"]:
                     metrics[key] = float(analysis["analysis_data"][key])
-        
+
         return metrics
     
     def _calculate_trend(self, values: List[float]) -> str:

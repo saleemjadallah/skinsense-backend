@@ -919,8 +919,23 @@ async def save_orbo_sdk_result(
         )
         
         # Save initial analysis to MongoDB
+        # Properly serialize nested Pydantic models
         analysis_dict = analysis.dict(by_alias=True)
-        
+
+        # Ensure nested ORBOResponse is properly serialized
+        if orbo_response and isinstance(analysis_dict.get('orbo_response'), dict):
+            # Make sure metrics are properly nested
+            if 'metrics' not in analysis_dict['orbo_response']:
+                # If metrics are at the wrong level, fix them
+                analysis_dict['orbo_response'] = {
+                    'metrics': orbo_metrics.dict() if hasattr(orbo_metrics, 'dict') else orbo_metrics,
+                    'skin_type': orbo_response.skin_type,
+                    'concerns': orbo_response.concerns,
+                    'confidence': orbo_response.confidence,
+                    'analysis_timestamp': orbo_response.analysis_timestamp.isoformat() if isinstance(orbo_response.analysis_timestamp, datetime) else orbo_response.analysis_timestamp,
+                    'raw_response': orbo_response.raw_response
+                }
+
         # Log the metrics being saved for debugging
         if 'orbo_response' in analysis_dict and 'metrics' in analysis_dict['orbo_response']:
             metrics = analysis_dict['orbo_response']['metrics']
