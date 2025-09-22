@@ -134,15 +134,20 @@ class ProgressService:
         period_days: int = 30
     ) -> Dict[str, Any]:
         """Get trend data for a specific metric over a time period"""
-        
+
         start_date = datetime.utcnow() - timedelta(days=period_days)
-        
-        # Fetch analyses within the period
+
+        # Debug logging
+        logger.info(f"[get_trend_data] Fetching for user_id: {user_id} (type: {type(user_id)}), metric: {metric_name}")
+
+        # Fetch analyses within the period - check both ObjectId and string formats
         analyses = list(db.skin_analyses.find({
-            "user_id": user_id,
+            "user_id": {"$in": [user_id, str(user_id)]},
             "status": {"$in": ["completed", "awaiting_ai"]},
             "created_at": {"$gte": start_date}
         }).sort("created_at", 1))
+
+        logger.info(f"[get_trend_data] Found {len(analyses)} analyses for user")
         
         if not analyses:
             return {
@@ -156,8 +161,11 @@ class ProgressService:
         
         # Extract data points
         data_points = []
-        for analysis in analyses:
+        for i, analysis in enumerate(analyses):
             metrics = self._extract_metrics(analysis)
+            if i == 0:  # Log first analysis details for debugging
+                logger.info(f"[get_trend_data] First analysis metrics extracted: {list(metrics.keys())}")
+                logger.info(f"[get_trend_data] {metric_name} value: {metrics.get(metric_name, 'NOT FOUND')}")
             if metric_name in metrics:
                 data_points.append({
                     "date": analysis["created_at"].isoformat(),
@@ -184,7 +192,7 @@ class ProgressService:
         if len(values) >= 2:
             improvement = ((values[-1] - values[0]) / values[0] * 100) if values[0] > 0 else 0
         
-        return {
+        result = {
             "metric": metric_name,
             "metric_info": self.METRIC_INFO.get(metric_name, {}),
             "period_days": period_days,
@@ -196,6 +204,10 @@ class ProgressService:
             "max_value": round(max(values), 1),
             "latest_value": round(values[-1], 1) if values else 0
         }
+
+        logger.info(f"[get_trend_data] Returning result with latest_value: {result['latest_value']}, data_points count: {len(data_points)}")
+
+        return result
     
     def get_metric_history(
         self,
@@ -303,10 +315,18 @@ class ProgressService:
     def _extract_metrics(self, analysis: Dict[str, Any]) -> Dict[str, float]:
         """Extract ORBO metrics from analysis data"""
         metrics = {}
+        analysis_id = analysis.get('_id', 'unknown')
 
         # Try new ORBO structure first (proper nesting)
         if "orbo_response" in analysis and analysis["orbo_response"]:
             orbo_resp = analysis["orbo_response"]
+
+            # Log structure for debugging
+            if isinstance(orbo_resp, dict):
+                has_metrics_key = "metrics" in orbo_resp
+                logger.debug(f"[_extract_metrics] Analysis {analysis_id}: orbo_response has 'metrics' key: {has_metrics_key}")
+                if has_metrics_key:
+                    logger.debug(f"[_extract_metrics] Keys in metrics: {list(orbo_resp['metrics'].keys()) if isinstance(orbo_resp['metrics'], dict) else 'NOT A DICT'}")
 
             # Check if metrics are properly nested under 'metrics' key
             if isinstance(orbo_resp, dict) and "metrics" in orbo_resp:
@@ -321,9 +341,7 @@ class ProgressService:
                     if key in orbo_resp:
                         metrics[key] = float(orbo_resp[key])
                 if metrics:  # If we found metrics at wrong level
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.warning(f"Found metrics at wrong level in analysis {analysis.get('_id')}")
+                    logger.warning(f"Found metrics at wrong level in analysis {analysis_id}")
 
         # Fallback to analysis_data
         elif "analysis_data" in analysis:
