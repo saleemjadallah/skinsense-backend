@@ -278,7 +278,7 @@ class ProgressService:
                 new_value = latest_metrics[metric_key]
                 if old_value > 0:
                     change = ((new_value - old_value) / old_value) * 100
-                    
+
                     metric_data = {
                         "metric": metric_key,
                         "name": self.METRIC_INFO.get(metric_key, {}).get("name", metric_key),
@@ -286,10 +286,12 @@ class ProgressService:
                         "new_value": round(new_value, 1),
                         "change": round(change, 1)
                     }
-                    
-                    if change >= 5:
+
+                    threshold = self.METRIC_INFO.get(metric_key, {}).get("improvement_threshold", 5.0)
+
+                    if change >= threshold:
                         improvements.append(metric_data)
-                    elif change <= -5:
+                    elif change <= -threshold:
                         concerns.append(metric_data)
         
         # Sort by magnitude of change
