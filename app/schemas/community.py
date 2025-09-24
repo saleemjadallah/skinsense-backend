@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field
-from typing import Optional, List, Literal
+from pydantic import BaseModel, Field, field_validator
+from typing import Optional, List
 from datetime import datetime
 from bson import ObjectId
 
@@ -9,8 +9,34 @@ class PostCreate(BaseModel):
     content: str = Field(..., min_length=1, max_length=2000)
     image_url: Optional[str] = None
     tags: List[str] = Field(default_factory=list, max_items=5)
-    post_type: Literal["post", "question", "transformation"] = "post"
+    post_type: str = Field(default="post", min_length=1, max_length=32)
     is_anonymous: bool = Field(default=False)
+
+    @field_validator("post_type", mode="before")
+    @classmethod
+    def normalize_post_type(cls, value: Optional[str]) -> str:
+        """Normalize the post type while staying backward compatible"""
+        default_type = "post"
+        allowed_types = {
+            "post",
+            "question",
+            "general",
+            "advice",
+            "milestone",
+            "progress",
+            "transformation",
+        }
+
+        if value is None:
+            return default_type
+
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if not normalized:
+                return default_type
+            return normalized if normalized in allowed_types else default_type
+
+        raise ValueError("Invalid post type value")
 
 
 class PostUpdate(BaseModel):
