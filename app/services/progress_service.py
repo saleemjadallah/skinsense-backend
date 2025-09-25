@@ -269,8 +269,10 @@ class ProgressService:
         oldest_metrics = self._extract_metrics(oldest_analysis)
         
         # Identify top improvements and concerns
-        improvements = []
-        concerns = []
+        improvements: List[Dict[str, Any]] = []
+        concerns: List[Dict[str, Any]] = []
+        minor_improvements: List[Dict[str, Any]] = []
+        minor_concerns: List[Dict[str, Any]] = []
         
         for metric_key in latest_metrics:
             if metric_key in oldest_metrics:
@@ -293,10 +295,22 @@ class ProgressService:
                         improvements.append(metric_data)
                     elif change <= -threshold:
                         concerns.append(metric_data)
+                    elif change > 0:
+                        minor_improvements.append(metric_data)
+                    elif change < 0:
+                        minor_concerns.append(metric_data)
         
         # Sort by magnitude of change
         improvements.sort(key=lambda x: x["change"], reverse=True)
         concerns.sort(key=lambda x: abs(x["change"]), reverse=True)
+        minor_improvements.sort(key=lambda x: x["change"], reverse=True)
+        minor_concerns.sort(key=lambda x: abs(x["change"]), reverse=True)
+
+        # Fallback: surface the most meaningful minor changes if nothing meets the threshold
+        if not improvements and minor_improvements:
+            improvements = minor_improvements[:3]
+        if not concerns and minor_concerns:
+            concerns = minor_concerns[:3]
         
         # Calculate consistency score
         consistency_score = self._calculate_consistency_score(analyses)
