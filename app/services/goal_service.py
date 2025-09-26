@@ -504,10 +504,13 @@ class GoalService:
                     if goal_data.get("target_parameter"):
                         # Find the correct parameter key
                         for param_key, param_info in self.skin_parameters.items():
-                            if param_info["display_name"].lower() == goal_data["target_parameter"].lower():
+                            if (
+                                param_info["display_name"].lower()
+                                == goal_data["target_parameter"].lower()
+                            ):
                                 goal_data["target_parameter"] = param_key
                                 break
-                    
+
                     # Ensure target_value is set - use a default if not provided
                     target_value = goal_data.get("target_value")
                     if target_value is None or target_value <= 0:
@@ -526,21 +529,27 @@ class GoalService:
                             target_value = 85  # 85% adherence rate
                         else:
                             target_value = 80  # Generic default
-                    
+
                     # Also validate type field
-                    valid_types = ["parameter_improvement", "routine_adherence", "holistic", "custom"]
+                    valid_types = [
+                        "parameter_improvement",
+                        "routine_adherence",
+                        "holistic",
+                        "custom",
+                    ]
                     goal_type = goal_data.get("type", "parameter_improvement")
                     if goal_type not in valid_types:
                         # Try to fix common mistakes
-                        if "parameter" in goal_type.lower() or "improvement" in goal_type.lower():
+                        lower_type = goal_type.lower()
+                        if "parameter" in lower_type or "improvement" in lower_type:
                             goal_type = "parameter_improvement"
-                        elif "routine" in goal_type.lower():
+                        elif "routine" in lower_type:
                             goal_type = "routine_adherence"
-                        elif "holistic" in goal_type.lower():
+                        elif "holistic" in lower_type:
                             goal_type = "holistic"
                         else:
                             goal_type = "custom"
-                
+
                     goal = GoalCreate(
                         title=goal_data["title"],
                         description=goal_data["description"],
@@ -550,11 +559,13 @@ class GoalService:
                         improvement_target=goal_data.get("improvement_target"),
                         duration_days=goal_data.get("duration_days", 30),  # Default 30 days if not provided
                         difficulty_level=goal_data.get("difficulty_level", "moderate"),
-                        category=goal_data.get("category")
+                        category=goal_data.get("category"),
                     )
                     goals.append(goal)
                 except Exception as e:
-                    logger.error(f"Error creating goal from data {goal_data}: {str(e)}")
+                    logger.error(
+                        f"Error creating goal from data {goal_data}: {str(e)}"
+                    )
                     # Skip this goal and continue with others
                     continue
             
