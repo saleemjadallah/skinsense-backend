@@ -7,6 +7,18 @@ from app.core.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+_BCRYPT_MAX_BYTES = 72
+
+
+def _truncate_for_bcrypt(secret: str) -> str:
+    """Clamp secrets to bcrypt's 72 byte limit to avoid runtime errors."""
+
+    secret_bytes = secret.encode("utf-8")
+    if len(secret_bytes) <= _BCRYPT_MAX_BYTES:
+        return secret
+    truncated = secret_bytes[:_BCRYPT_MAX_BYTES]
+    return truncated.decode("utf-8", errors="ignore")
+
 def create_access_token(
     subject: Union[str, Any], expires_delta: Optional[timedelta] = None
 ) -> str:
@@ -28,10 +40,16 @@ def create_refresh_token(subject: Union[str, Any]) -> str:
     return encoded_jwt
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        return pwd_context.verify(plain_password, hashed_password)
+    except ValueError as exc:
+        if "password cannot be longer than 72 bytes" not in str(exc):
+            raise
+        return pwd_context.verify(_truncate_for_bcrypt(plain_password), hashed_password)
+
 
 def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
+    return pwd_context.hash(_truncate_for_bcrypt(password))
 
 def verify_token(token: str, token_type: str = "access") -> Optional[str]:
     try:
