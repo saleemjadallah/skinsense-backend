@@ -251,7 +251,26 @@ class ProgressService:
             "status": {"$in": ["completed", "awaiting_ai"]},
             "created_at": {"$gte": start_date}
         }).sort("created_at", 1))
-        
+
+        # If we don't have enough analyses within the requested window, try to
+        # pull the most recent analysis just outside the window so we still
+        # have a valid baseline to compare against. This prevents users who
+        # have an older baseline scan plus a fresh scan from seeing an empty
+        # state even though they have taken multiple analyses overall.
+        if len(analyses) < 2:
+            fallback_needed = 2 - len(analyses)
+            if fallback_needed > 0:
+                additional = list(db.skin_analyses.find({
+                    "user_id": {"$in": [user_id, str(user_id)]},
+                    "status": {"$in": ["completed", "awaiting_ai"]},
+                    "created_at": {"$lt": start_date}
+                }).sort("created_at", -1).limit(fallback_needed))
+
+                if additional:
+                    # We queried newest-first, so reverse to keep overall list chronological.
+                    additional.reverse()
+                    analyses = additional + analyses
+
         if len(analyses) < 2:
             return {
                 "has_progress": False,
@@ -259,11 +278,11 @@ class ProgressService:
                 "analyses_count": len(analyses),
                 "period_days": period_days
             }
-        
+
         # Get latest and oldest analysis
         latest_analysis = analyses[-1]
         oldest_analysis = analyses[0]
-        
+
         # Calculate overall progress
         latest_metrics = self._extract_metrics(latest_analysis)
         oldest_metrics = self._extract_metrics(oldest_analysis)
