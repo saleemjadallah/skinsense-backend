@@ -111,6 +111,10 @@ class CacheService:
                 f"skinsense:achievements:{user_id}",
                 f"skinsense:insights:{user_id}",
                 f"skinsense:analysis_history:{user_id}",
+                f"skinsense:progress_summary:{user_id}*",
+                f"skinsense:progress_trends:{user_id}*",
+                f"skinsense:progress_insights:{user_id}*",
+                f"skinsense:metric_progress:{user_id}*",
             ]
             
             for pattern in patterns:
