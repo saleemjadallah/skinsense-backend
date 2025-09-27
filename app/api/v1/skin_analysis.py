@@ -25,6 +25,7 @@ from app.services.perplexity_service import perplexity_service
 from app.services.recommendation_service import recommendation_service
 from app.services.progress_service import progress_service
 from app.services.subscription_service import SubscriptionService
+from app.core.cache import cache_service
 from typing import Dict, Any
 import logging
 import json
@@ -252,7 +253,12 @@ async def process_skin_analysis(
             {"_id": analysis_id},
             {"$set": update_data}
         )
-        
+
+        # Invalidate progress-related caches for this user
+        user_id_str = str(user_data["id"])
+        cache_service.invalidate_user_cache(user_id_str)
+        logger.info(f"Invalidated progress cache for user {user_id_str} after new analysis")
+
         # Track achievement for completed analysis
         from .achievement_integration import track_skin_analysis_completion
         
@@ -667,14 +673,24 @@ async def complete_ai_pipeline(
             analysis_id=analysis_id
         )
         
-        # Update analysis with results
+        # Update analysis with results and mark as completed
+        skin_analysis_payload = complete_results.get("skin_analysis")
+        update_fields = {
+            "analysis_data": skin_analysis_payload,
+            "ai_feedback": complete_results.get("ai_feedback"),
+            "product_recommendations": complete_results.get("product_recommendations"),
+            "status": "completed",
+            "analysis_completed_at": get_utc_now(),
+            "processing_complete": True,
+            "updated_at": get_utc_now()
+        }
+
+        if skin_analysis_payload is not None:
+            update_fields["orbo_response"] = skin_analysis_payload
+
         db.skin_analyses.update_one(
             {"_id": analysis_id},
-            {"$set": {
-                "analysis_data": complete_results["skin_analysis"],
-                "ai_feedback": complete_results["ai_feedback"],
-                "updated_at": get_utc_now()
-            }}
+            {"$set": update_fields}
         )
         
         # Track achievement for completed analysis
@@ -691,6 +707,9 @@ async def complete_ai_pipeline(
         )
         
         logger.info(f"Tracked achievement for complete-pipeline analysis {analysis_id}, user {current_user.id}, score: {skin_score}")
+
+        # Invalidate cached progress data for this user so new metrics render immediately
+        cache_service.invalidate_user_cache(str(current_user.id))
         
         return complete_results
         
@@ -1437,14 +1456,26 @@ async def get_progress_insights(
     current_user: UserModel = Depends(get_current_active_user),
     db: Database = Depends(get_database)
 ):
-    """Get detailed progress insights over time"""
-    
+    """Get detailed progress insights over time with Redis caching"""
+
+    # Try to get from cache first
+    cache_key = f"{str(current_user.id)}_{period_days}"
+    cached_data = cache_service.get("progress_insights", cache_key)
+
+    if cached_data:
+        logger.debug(f"Cache hit for progress_insights:{cache_key}")
+        return cached_data
+
     insights = await recommendation_service.get_progress_insights(
         user=current_user,
         db=db,
         period_days=period_days
     )
-    
+
+    # Cache the result for 5 minutes
+    cache_service.set("progress_insights", cache_key, insights, ttl_seconds=300)
+    logger.debug(f"Cached progress_insights:{cache_key} for 300 seconds")
+
     return insights
 
 # Progress tracking endpoints
@@ -1688,21 +1719,21 @@ async def get_metric_progress(
     current_user: UserModel = Depends(get_current_active_user),
     db: Database = Depends(get_database)
 ):
-    """Get progress data for a specific metric"""
-    
+    """Get progress data for a specific metric with Redis caching"""
+
     # Validate metric name
     valid_metrics = [
         "overall_skin_health_score", "hydration", "smoothness", "radiance",
-        "dark_spots", "firmness", "fine_lines_wrinkles", "acne", 
+        "dark_spots", "firmness", "fine_lines_wrinkles", "acne",
         "dark_circles", "redness"
     ]
-    
+
     if metric_name not in valid_metrics:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid metric name. Valid metrics: {', '.join(valid_metrics)}"
         )
-    
+
     # Ensure user_id is ObjectId
     from bson import ObjectId
     try:
@@ -1710,13 +1741,25 @@ async def get_metric_progress(
     except:
         user_oid = ObjectId(str(current_user.id))
 
+    # Try to get from cache first
+    cache_key = f"{str(user_oid)}_{metric_name}_{period_days}"
+    cached_data = cache_service.get("metric_progress", cache_key)
+
+    if cached_data:
+        logger.debug(f"Cache hit for metric_progress:{cache_key}")
+        return cached_data
+
     trend_data = progress_service.get_trend_data(
         user_id=user_oid,
         db=db,
         metric_name=metric_name,
         period_days=period_days
     )
-    
+
+    # Cache the result for 5 minutes
+    cache_service.set("metric_progress", cache_key, trend_data, ttl_seconds=300)
+    logger.debug(f"Cached metric_progress:{cache_key} for 300 seconds")
+
     return trend_data
 
 @router.get("/progress/metrics/{metric_name}/history", response_model=List[Dict[str, Any]])
@@ -1787,8 +1830,8 @@ async def get_progress_summary(
     current_user: UserModel = Depends(get_current_active_user),
     db: Database = Depends(get_database)
 ):
-    """Get comprehensive progress summary"""
-    
+    """Get comprehensive progress summary with Redis caching"""
+
     # Ensure user_id is ObjectId
     from bson import ObjectId
     try:
@@ -1796,12 +1839,25 @@ async def get_progress_summary(
     except:
         user_oid = ObjectId(str(current_user.id))
 
+    # Try to get from cache first
+    cache_key = f"{str(user_oid)}_{period_days}"
+    cached_data = cache_service.get("progress_summary", cache_key)
+
+    if cached_data:
+        logger.debug(f"Cache hit for progress_summary:{cache_key}")
+        return cached_data
+
+    # Generate fresh data if not in cache
     summary = progress_service.generate_progress_summary(
         user_id=user_oid,
         db=db,
         period_days=period_days
     )
-    
+
+    # Cache the result for 5 minutes
+    cache_service.set("progress_summary", cache_key, summary, ttl_seconds=300)
+    logger.debug(f"Cached progress_summary:{cache_key} for 300 seconds")
+
     return summary
 
 @router.get("/progress/trends", response_model=Dict[str, Any])
@@ -1810,14 +1866,22 @@ async def get_all_trends(
     current_user: UserModel = Depends(get_current_active_user),
     db: Database = Depends(get_database)
 ):
-    """Get trend data for all metrics"""
-    
+    """Get trend data for all metrics with Redis caching"""
+
     # Ensure user_id is ObjectId
     from bson import ObjectId
     try:
         user_oid = current_user.id if isinstance(current_user.id, ObjectId) else ObjectId(str(current_user.id))
     except:
         user_oid = ObjectId(str(current_user.id))
+
+    # Try to get from cache first
+    cache_key = f"{str(user_oid)}_{period_days}"
+    cached_data = cache_service.get("progress_trends", cache_key)
+
+    if cached_data:
+        logger.debug(f"Cache hit for progress_trends:{cache_key}")
+        return cached_data
 
     metrics = [
         "overall_skin_health_score", "hydration", "smoothness", "radiance",
@@ -1833,12 +1897,18 @@ async def get_all_trends(
             metric_name=metric,
             period_days=period_days
         )
-    
-    return {
+
+    result = {
         "period_days": period_days,
         "metrics": trends,
         "generated_at": get_utc_now().isoformat()
     }
+
+    # Cache the result for 5 minutes
+    cache_service.set("progress_trends", cache_key, result, ttl_seconds=300)
+    logger.debug(f"Cached progress_trends:{cache_key} for 300 seconds")
+
+    return result
 
 # ORBO AI Integration Endpoints
 @router.post("/orbo/analyze-skin")

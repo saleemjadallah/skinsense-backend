@@ -143,8 +143,11 @@ class ProgressService:
         # Fetch analyses within the period - check both ObjectId and string formats
         analyses = list(db.skin_analyses.find({
             "user_id": {"$in": [user_id, str(user_id)]},
-            "status": {"$in": ["completed", "awaiting_ai"]},
-            "created_at": {"$gte": start_date}
+            "created_at": {"$gte": start_date},
+            "$or": [
+                {"status": {"$in": ["completed", "awaiting_ai"]}},
+                {"status": "pending", "orbo_response": {"$exists": True, "$ne": None}}
+            ]
         }).sort("created_at", 1))
 
         logger.info(f"[get_trend_data] Found {len(analyses)} analyses for user")
@@ -219,8 +222,11 @@ class ProgressService:
         """Get historical values for a specific metric"""
         
         analyses = list(db.skin_analyses.find({
-            "user_id": user_id,
-            "status": {"$in": ["completed", "awaiting_ai"]}
+            "user_id": {"$in": [user_id, str(user_id)]},
+            "$or": [
+                {"status": {"$in": ["completed", "awaiting_ai"]}},
+                {"status": "pending", "orbo_response": {"$exists": True, "$ne": None}}
+            ]
         }).sort("created_at", -1).limit(limit))
         
         history = []
@@ -262,8 +268,11 @@ class ProgressService:
             if fallback_needed > 0:
                 additional = list(db.skin_analyses.find({
                     "user_id": {"$in": [user_id, str(user_id)]},
-                    "status": {"$in": ["completed", "awaiting_ai"]},
-                    "created_at": {"$lt": start_date}
+                    "created_at": {"$lt": start_date},
+                    "$or": [
+                        {"status": {"$in": ["completed", "awaiting_ai"]}},
+                        {"status": "pending", "orbo_response": {"$exists": True, "$ne": None}}
+                    ]
                 }).sort("created_at", -1).limit(fallback_needed))
 
                 if additional:
@@ -290,9 +299,8 @@ class ProgressService:
         # Identify top improvements and concerns
         improvements: List[Dict[str, Any]] = []
         concerns: List[Dict[str, Any]] = []
-        minor_improvements: List[Dict[str, Any]] = []
-        minor_concerns: List[Dict[str, Any]] = []
-        
+        all_changes: List[Dict[str, Any]] = []
+
         for metric_key in latest_metrics:
             if metric_key in oldest_metrics:
                 old_value = oldest_metrics[metric_key]
@@ -308,28 +316,42 @@ class ProgressService:
                         "change": round(change, 1)
                     }
 
-                    threshold = self.METRIC_INFO.get(metric_key, {}).get("improvement_threshold", 5.0)
+                    # Lower the threshold to be more forgiving
+                    threshold = self.METRIC_INFO.get(metric_key, {}).get("improvement_threshold", 5.0) * 0.5  # Use half the threshold
+
+                    # Add to all_changes for fallback
+                    if abs(change) > 0.1:  # Any meaningful change
+                        all_changes.append(metric_data)
 
                     if change >= threshold:
                         improvements.append(metric_data)
                     elif change <= -threshold:
                         concerns.append(metric_data)
-                    elif change > 0:
-                        minor_improvements.append(metric_data)
-                    elif change < 0:
-                        minor_concerns.append(metric_data)
-        
+                    elif change > 1.0:  # Small positive changes
+                        improvements.append(metric_data)
+                    elif change < -1.0:  # Small negative changes
+                        concerns.append(metric_data)
+
         # Sort by magnitude of change
         improvements.sort(key=lambda x: x["change"], reverse=True)
         concerns.sort(key=lambda x: abs(x["change"]), reverse=True)
-        minor_improvements.sort(key=lambda x: x["change"], reverse=True)
-        minor_concerns.sort(key=lambda x: abs(x["change"]), reverse=True)
+        all_changes.sort(key=lambda x: abs(x["change"]), reverse=True)
 
-        # Fallback: surface the most meaningful minor changes if nothing meets the threshold
-        if not improvements and minor_improvements:
-            improvements = minor_improvements[:3]
-        if not concerns and minor_concerns:
-            concerns = minor_concerns[:3]
+        # Fallback: If we have no improvements/concerns, use the top changes
+        if not improvements and not concerns and all_changes:
+            # Split all_changes into positive and negative
+            positive_changes = [c for c in all_changes if c["change"] > 0]
+            negative_changes = [c for c in all_changes if c["change"] < 0]
+
+            improvements = positive_changes[:3] if positive_changes else []
+            concerns = negative_changes[:3] if negative_changes else []
+
+            # If still no improvements, just show the top changes regardless of sign
+            if not improvements and all_changes:
+                improvements = all_changes[:3]
+
+        # Log what we found for debugging
+        logger.info(f"Progress summary: {len(improvements)} improvements, {len(concerns)} concerns from {len(all_changes)} total changes")
         
         # Calculate consistency score
         consistency_score = self._calculate_consistency_score(analyses)
@@ -348,7 +370,7 @@ class ProgressService:
         }
     
     def _extract_metrics(self, analysis: Dict[str, Any]) -> Dict[str, float]:
-        """Extract ORBO metrics from analysis data"""
+        """Extract ORBO metrics from analysis data - handles multiple data structures"""
         metrics = {}
         analysis_id = analysis.get('_id', 'unknown')
 
@@ -364,25 +386,47 @@ class ProgressService:
                     logger.debug(f"[_extract_metrics] Keys in metrics: {list(orbo_resp['metrics'].keys()) if isinstance(orbo_resp['metrics'], dict) else 'NOT A DICT'}")
 
             # Check if metrics are properly nested under 'metrics' key
-            if isinstance(orbo_resp, dict) and "metrics" in orbo_resp:
+            if isinstance(orbo_resp, dict) and "metrics" in orbo_resp and isinstance(orbo_resp["metrics"], dict):
                 orbo_metrics = orbo_resp["metrics"]
                 for key in self.METRIC_INFO.keys():
                     if key in orbo_metrics:
                         metrics[key] = float(orbo_metrics[key])
 
             # Fallback: Check if metrics are at the top level of orbo_response (wrong structure)
-            elif isinstance(orbo_resp, dict):
+            if not metrics and isinstance(orbo_resp, dict):
+                found_at_top = False
                 for key in self.METRIC_INFO.keys():
                     if key in orbo_resp:
-                        metrics[key] = float(orbo_resp[key])
-                if metrics:  # If we found metrics at wrong level
-                    logger.warning(f"Found metrics at wrong level in analysis {analysis_id}")
+                        try:
+                            metrics[key] = float(orbo_resp[key])
+                            found_at_top = True
+                        except (TypeError, ValueError):
+                            continue
+                if found_at_top:  # If we found metrics at wrong level
+                    logger.warning(f"Found metrics at wrong level in analysis {analysis_id}, extracted {len(metrics)} metrics")
 
         # Fallback to analysis_data
-        elif "analysis_data" in analysis:
+        if not metrics and "analysis_data" in analysis:
             for key in self.METRIC_INFO.keys():
                 if key in analysis["analysis_data"]:
-                    metrics[key] = float(analysis["analysis_data"][key])
+                    try:
+                        metrics[key] = float(analysis["analysis_data"][key])
+                    except (TypeError, ValueError):
+                        continue
+
+        # Final fallback: check if metrics exist at root level
+        if not metrics:
+            for key in self.METRIC_INFO.keys():
+                if key in analysis:
+                    try:
+                        metrics[key] = float(analysis[key])
+                    except (TypeError, ValueError):
+                        continue
+
+        if not metrics:
+            logger.warning(f"No metrics extracted from analysis {analysis_id}")
+        else:
+            logger.debug(f"Extracted {len(metrics)} metrics from analysis {analysis_id}")
 
         return metrics
     

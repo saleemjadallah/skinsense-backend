@@ -336,7 +336,13 @@ class UnifiedRecommendationService:
         # Include both completed AND awaiting_ai statuses
         # awaiting_ai means ORBO analysis is done but AI feedback is pending
         return db.skin_analyses.find_one(
-            {"user_id": user_id, "status": {"$in": ["completed", "awaiting_ai"]}},
+            {
+                "user_id": {"$in": [user_id, str(user_id)]},
+                "$or": [
+                    {"status": {"$in": ["completed", "awaiting_ai"]}},
+                    {"status": "pending", "orbo_response": {"$exists": True, "$ne": None}}
+                ]
+            },
             sort=[("created_at", -1)]
         )
     
@@ -349,7 +355,13 @@ class UnifiedRecommendationService:
         """Get user's recent skin analyses"""
         # Include both completed AND awaiting_ai statuses
         cursor = db.skin_analyses.find(
-            {"user_id": user_id, "status": {"$in": ["completed", "awaiting_ai"]}}
+            {
+                "user_id": {"$in": [user_id, str(user_id)]},
+                "$or": [
+                    {"status": {"$in": ["completed", "awaiting_ai"]}},
+                    {"status": "pending", "orbo_response": {"$exists": True, "$ne": None}}
+                ]
+            }
         ).sort("created_at", -1).limit(limit)
 
         return list(cursor)
@@ -368,9 +380,12 @@ class UnifiedRecommendationService:
         # Include both completed AND awaiting_ai statuses
         # awaiting_ai means ORBO analysis is done but AI feedback is pending
         cursor = db.skin_analyses.find({
-            "user_id": user_id,
-            "status": {"$in": ["completed", "awaiting_ai"]},
-            "created_at": {"$gte": start_date}
+            "user_id": {"$in": [user_id, str(user_id)]},
+            "created_at": {"$gte": start_date},
+            "$or": [
+                {"status": {"$in": ["completed", "awaiting_ai"]}},
+                {"status": "pending", "orbo_response": {"$exists": True, "$ne": None}}
+            ]
         }).sort("created_at", 1)
 
         return list(cursor)
