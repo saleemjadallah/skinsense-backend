@@ -93,15 +93,16 @@ async def create_post_json(
 ):
     """Create a new community post (JSON version without image support)"""
     
-    # Check if user can post (premium only)
-    if not SubscriptionService.can_post_community(current_user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "message": "Community posting is a premium feature",
-                "upgrade_prompt": "Upgrade to Premium to share your skincare journey and connect with the community!"
-            }
-        )
+    # Check if user can post (temporarily disabled for testing)
+    # TODO: Re-enable premium check after testing
+    # if not SubscriptionService.can_post_community(current_user):
+    #     raise HTTPException(
+    #         status_code=status.HTTP_403_FORBIDDEN,
+    #         detail={
+    #             "message": "Community posting is a premium feature",
+    #             "upgrade_prompt": "Upgrade to Premium to share your skincare journey and connect with the community!"
+    #         }
+    #     )
     
     try:
         # Log incoming post data
@@ -159,22 +160,23 @@ async def create_post(
     content: str = Form(...),
     post_type: str = Form("post"),
     is_anonymous: str = Form("false"),
-    tags: Optional[List[str]] = Form(default=[]),
+    tags: Optional[List[str]] = Form(default=None),
     images: Optional[List[UploadFile]] = File(default=None),
     current_user: UserModel = Depends(get_current_active_user),
     db: Database = Depends(get_database)
 ):
     """Create a new community post with optional image uploads"""
     
-    # Check if user can post (premium only)
-    if not SubscriptionService.can_post_community(current_user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "message": "Community posting is a premium feature",
-                "upgrade_prompt": "Upgrade to Premium to share your skincare journey and connect with the community!"
-            }
-        )
+    # Check if user can post (temporarily disabled for testing)
+    # TODO: Re-enable premium check after testing
+    # if not SubscriptionService.can_post_community(current_user):
+    #     raise HTTPException(
+    #         status_code=status.HTTP_403_FORBIDDEN,
+    #         detail={
+    #             "message": "Community posting is a premium feature",
+    #             "upgrade_prompt": "Upgrade to Premium to share your skincare journey and connect with the community!"
+    #         }
+    #     )
     
     try:
         # Parse is_anonymous from string to boolean
@@ -195,25 +197,42 @@ async def create_post(
         logger.info(f"Number of images: {len(images) if images else 0}")
 
         if images and len(images) > 0:
-            logger.info(f"First image filename: {images[0].filename}")
-            logger.info(f"First image content type: {images[0].content_type}")
+            try:
+                logger.info(f"First image filename: {images[0].filename}")
+                logger.info(f"First image content type: {images[0].content_type}")
 
-            if images[0].filename:
-                # Upload first image to S3
-                image = images[0]
-                file_content = await image.read()
-                logger.info(f"Image file size: {len(file_content)} bytes")
+                if images[0].filename:
+                    # Upload first image to S3
+                    image = images[0]
+                    file_content = await image.read()
+                    logger.info(f"Image file size: {len(file_content)} bytes")
 
-                image_url = await s3_service.upload_community_image(
-                    file_content,
-                    image.filename,
-                    f"community/{current_user.id}"
-                )
-                logger.info(f"Image uploaded to: {image_url}")
+                    try:
+                        image_url = await s3_service.upload_community_image(
+                            file_content,
+                            image.filename,
+                            f"community/{current_user.id}"
+                        )
+                        logger.info(f"Image uploaded successfully to: {image_url}")
+
+                        # Check if S3 was disabled (placeholder URL)
+                        if image_url and image_url.startswith("s3-disabled://"):
+                            logger.warning("S3 is not configured - image upload skipped")
+                            image_url = None  # Don't save placeholder URLs
+                    except Exception as upload_error:
+                        logger.error(f"S3 upload error: {upload_error}")
+                        logger.error(f"S3 upload error details: {str(upload_error)}")
+                        # Continue without image rather than failing the entire post
+                        image_url = None
+            except Exception as image_error:
+                logger.error(f"Error processing image: {image_error}")
+                logger.error(f"Image processing error details: {str(image_error)}")
+                image_url = None
         else:
             logger.info("No images provided in the request")
 
         # Create post document
+        logger.info(f"Creating post document with image_url: {image_url}")
         post = CommunityPost(
             user_id=current_user.id,
             content=content,
@@ -225,10 +244,11 @@ async def create_post(
 
         # Insert into database, letting MongoDB generate the _id
         post_document = post.model_dump(by_alias=True, exclude_none=True)
+        logger.info(f"Post document to insert: {post_document}")
         result = db.community_posts.insert_one(post_document)
         post.id = result.inserted_id
 
-        logger.info(f"Post created with ID: {post.id}")
+        logger.info(f"Post created successfully with ID: {post.id}, image_url: {image_url}")
 
         # Get user profile (handle anonymous)
         user_profile = get_user_profile(current_user.id, db, is_anonymous=post.is_anonymous)
@@ -724,15 +744,16 @@ async def create_comment(
 ):
     """Create a comment on a post"""
     
-    # Check if user can comment (premium only)
-    if not SubscriptionService.can_post_community(current_user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "message": "Commenting is a premium feature",
-                "upgrade_prompt": "Upgrade to Premium to engage with the community!"
-            }
-        )
+    # Check if user can comment (temporarily disabled for testing)
+    # TODO: Re-enable premium check after testing
+    # if not SubscriptionService.can_post_community(current_user):
+    #     raise HTTPException(
+    #         status_code=status.HTTP_403_FORBIDDEN,
+    #         detail={
+    #             "message": "Commenting is a premium feature",
+    #             "upgrade_prompt": "Upgrade to Premium to engage with the community!"
+    #         }
+    #     )
     
     try:
         # Verify post exists
