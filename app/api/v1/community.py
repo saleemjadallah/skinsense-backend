@@ -191,16 +191,27 @@ async def create_post(
 
         # Handle image upload if provided
         image_url = None
-        if images and len(images) > 0 and images[0].filename:
-            # Upload first image to S3
-            image = images[0]
-            file_content = await image.read()
-            image_url = await s3_service.upload_community_image(
-                file_content,
-                image.filename,
-                f"community/{current_user.id}"
-            )
-            logger.info(f"Image uploaded to: {image_url}")
+        logger.info(f"Images received: {images}")
+        logger.info(f"Number of images: {len(images) if images else 0}")
+
+        if images and len(images) > 0:
+            logger.info(f"First image filename: {images[0].filename}")
+            logger.info(f"First image content type: {images[0].content_type}")
+
+            if images[0].filename:
+                # Upload first image to S3
+                image = images[0]
+                file_content = await image.read()
+                logger.info(f"Image file size: {len(file_content)} bytes")
+
+                image_url = await s3_service.upload_community_image(
+                    file_content,
+                    image.filename,
+                    f"community/{current_user.id}"
+                )
+                logger.info(f"Image uploaded to: {image_url}")
+        else:
+            logger.info("No images provided in the request")
 
         # Create post document
         post = CommunityPost(
