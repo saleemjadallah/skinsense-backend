@@ -598,7 +598,7 @@ async def track_product_interaction(
     db: Database = Depends(get_database)
 ):
     """Track user interaction with recommended products"""
-    
+
     await perplexity_service.track_product_interaction(
         user_id=current_user.id,
         product_data=interaction_data.get("product_data"),
@@ -606,8 +606,48 @@ async def track_product_interaction(
         db=db,
         skin_analysis_id=ObjectId(interaction_data.get("analysis_id")) if interaction_data.get("analysis_id") else None
     )
-    
+
     return {"message": "Interaction tracked successfully"}
+
+@router.get("/products/saved")
+async def get_saved_products(
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Database = Depends(get_database)
+):
+    """Get user's saved products"""
+    try:
+        user_oid = ObjectId(str(current_user.id))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid user_id format: {str(e)}"
+        )
+
+    # Fetch all saved product interactions
+    saved_interactions = list(db.user_product_interactions.find({
+        "user_id": user_oid,
+        "interaction_type": "saved"
+    }).sort("created_at", -1))
+
+    # Extract unique products (deduplicate by product name/brand)
+    products = []
+    seen_products = set()
+
+    for interaction in saved_interactions:
+        product_data = interaction.get("product_data", {})
+
+        # Create a unique key based on product name and brand
+        product_key = f"{product_data.get('name', '')}_{product_data.get('brand', '')}"
+
+        if product_key not in seen_products and product_data:
+            seen_products.add(product_key)
+            products.append(product_data)
+
+    return {
+        "products": products,
+        "total": len(products),
+        "message": f"Retrieved {len(products)} saved products"
+    }
 
 @router.post("/complete-pipeline", response_model=Dict[str, Any])
 async def complete_ai_pipeline(
