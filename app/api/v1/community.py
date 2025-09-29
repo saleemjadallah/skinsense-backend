@@ -4,10 +4,10 @@ from typing import List, Optional, Any
 from datetime import datetime, timedelta
 from bson import ObjectId
 import logging
-import json
 
 from app.database import get_database
 from app.api.deps import get_current_active_user
+from app.core.cache import cache_service
 from app.models.user import UserModel
 from app.models.community import CommunityPost, Comment, PostInteraction
 from app.schemas.community import (
@@ -129,6 +129,10 @@ async def create_post_json(
 
         logger.info(f"User profile retrieved - Username: {user_profile.username}, Anonymous: {user_profile.is_anonymous}")
 
+        # Invalidate cached community data
+        cache_service.invalidate_prefix("community_posts")
+        cache_service.invalidate_prefix("community_stats")
+
         # Return response
         return PostResponse(
             id=str(post.id),
@@ -220,6 +224,10 @@ async def create_post(
 
         logger.info(f"User profile retrieved - Username: {user_profile.username}, Anonymous: {user_profile.is_anonymous}")
 
+        # Invalidate cached community data
+        cache_service.invalidate_prefix("community_posts")
+        cache_service.invalidate_prefix("community_stats")
+
         # Return response
         return PostResponse(
             id=str(post.id),
@@ -252,6 +260,79 @@ async def get_posts(
     db: Database = Depends(get_database)
 ):
     """Get community posts with filters"""
+    cache_identifier = (
+        f"skip={skip}|limit={limit}|type={post_type or 'all'}|"
+        f"tag={tag or 'all'}|trending={'1' if trending else '0'}"
+    )
+    user_id_str = str(current_user.id)
+
+    def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                logger.warning(f"Unable to parse datetime '{value}' from cache")
+                return None
+
+    try:
+        cached_payload = cache_service.get("community_posts", cache_identifier)
+        if cached_payload:
+            post_responses = []
+            for cached_post in cached_payload.get("posts", []):
+                user_profile = UserProfile(**cached_post["user"])
+                likes_user_ids = cached_post.get("likes_user_ids", [])
+                saves_user_ids = cached_post.get("saves_user_ids", [])
+
+                top_comments = []
+                for cached_comment in cached_post.get("top_comments", []):
+                    comment_user = UserProfile(**cached_comment["user"])
+                    top_comments.append(CommentResponse(
+                        id=cached_comment["id"],
+                        post_id=cached_comment.get("post_id", cached_post["id"]),
+                        user=comment_user,
+                        content=cached_comment["content"],
+                        parent_comment_id=cached_comment.get("parent_comment_id"),
+                        replies_count=cached_comment.get("replies_count", 0),
+                        likes_count=cached_comment.get("likes_count", 0),
+                        is_liked=user_id_str in cached_comment.get("likes_user_ids", []),
+                        created_at=_parse_datetime(cached_comment.get("created_at")) or datetime.utcnow(),
+                        updated_at=_parse_datetime(cached_comment.get("updated_at")),
+                        is_edited=cached_comment.get("is_edited", False)
+                    ))
+
+                post_responses.append(PostResponse(
+                    id=cached_post["id"],
+                    user=user_profile,
+                    content=cached_post.get("content", ""),
+                    image_url=cached_post.get("image_url"),
+                    tags=cached_post.get("tags", []),
+                    post_type=cached_post.get("post_type", "post"),
+                    likes_count=cached_post.get("likes_count", 0),
+                    comments_count=cached_post.get("comments_count", 0),
+                    saves_count=cached_post.get("saves_count", 0),
+                    is_liked=user_id_str in likes_user_ids,
+                    is_saved=user_id_str in saves_user_ids,
+                    created_at=_parse_datetime(cached_post.get("created_at")) or datetime.utcnow(),
+                    updated_at=_parse_datetime(cached_post.get("updated_at")),
+                    is_edited=cached_post.get("is_edited", False),
+                    top_comments=top_comments
+                ))
+
+            logger.debug(f"Serving community posts from cache key {cache_identifier}")
+            return PostListResponse(
+                posts=post_responses,
+                total=cached_payload.get("total", 0),
+                skip=cached_payload.get("skip", skip),
+                limit=cached_payload.get("limit", limit),
+                has_more=cached_payload.get("has_more", False)
+            )
+    except Exception as cache_error:
+        logger.warning(f"Failed to load community posts from cache: {cache_error}")
+
     try:
         # Build query
         query = {"is_active": True}
@@ -273,6 +354,7 @@ async def get_posts(
         
         # Transform posts
         post_responses = []
+        cache_posts = []
         for post in posts:
             # Get user profile (handle anonymous)
             user_profile = get_user_profile(post["user_id"], db, is_anonymous=post.get("is_anonymous", False))
@@ -282,23 +364,41 @@ async def get_posts(
             
             # Get top 2 comments
             top_comments = []
+            top_comments_cache = []
             comments = list(db.comments.find(
                 {"post_id": post["_id"], "is_active": True}
             ).sort([("likes", -1), ("created_at", -1)]).limit(2))
             
             for comment in comments:
                 comment_user = get_user_profile(comment["user_id"], db)
+                comment_likes = comment.get("likes", [])
+                is_comment_liked = current_user.id in comment_likes
                 top_comments.append(CommentResponse(
                     id=str(comment["_id"]),
                     post_id=str(post["_id"]),
                     user=comment_user,
                     content=comment["content"],
-                    likes_count=len(comment.get("likes", [])),
-                    is_liked=current_user.id in comment.get("likes", []),
+                    parent_comment_id=str(comment.get("parent_comment_id")) if comment.get("parent_comment_id") else None,
+                    replies_count=comment.get("replies_count", 0),
+                    likes_count=len(comment_likes),
+                    is_liked=is_comment_liked,
                     created_at=comment["created_at"],
                     updated_at=comment.get("updated_at"),
                     is_edited=comment.get("is_edited", False)
                 ))
+                top_comments_cache.append({
+                    "id": str(comment["_id"]),
+                    "post_id": str(post["_id"]),
+                    "user": comment_user.model_dump(),
+                    "content": comment["content"],
+                    "parent_comment_id": str(comment.get("parent_comment_id")) if comment.get("parent_comment_id") else None,
+                    "replies_count": comment.get("replies_count", 0),
+                    "likes_count": len(comment_likes),
+                    "likes_user_ids": [str(uid) for uid in comment_likes],
+                    "created_at": comment["created_at"].isoformat(),
+                    "updated_at": comment.get("updated_at").isoformat() if comment.get("updated_at") else None,
+                    "is_edited": comment.get("is_edited", False)
+                })
             
             # Log post data being returned
             logger.debug(f"Returning post {post['_id']}: username='{user_profile.username}', content='{post.get('content', '')[:50]}...', anonymous={post.get('is_anonymous', False)}")
@@ -320,13 +420,40 @@ async def get_posts(
                 is_edited=post.get("is_edited", False),
                 top_comments=top_comments
             ))
+
+            cache_posts.append({
+                "id": str(post["_id"]),
+                "user": user_profile.model_dump(),
+                "content": post.get("content", ""),
+                "image_url": post.get("image_url"),
+                "tags": post.get("tags", []),
+                "post_type": post.get("post_type", "post"),
+                "likes_count": len(post.get("likes", [])),
+                "comments_count": post.get("comments_count", 0),
+                "saves_count": len(post.get("saves", [])),
+                "likes_user_ids": [str(uid) for uid in post.get("likes", [])],
+                "saves_user_ids": [str(uid) for uid in post.get("saves", [])],
+                "created_at": post["created_at"].isoformat(),
+                "updated_at": post.get("updated_at").isoformat() if post.get("updated_at") else None,
+                "is_edited": post.get("is_edited", False),
+                "top_comments": top_comments_cache
+            })
         
+        cache_payload = {
+            "posts": cache_posts,
+            "total": total,
+            "skip": skip,
+            "limit": limit,
+            "has_more": (skip + limit) < total
+        }
+        cache_service.set("community_posts", cache_identifier, cache_payload, ttl_seconds=180)
+
         return PostListResponse(
             posts=post_responses,
             total=total,
             skip=skip,
             limit=limit,
-            has_more=(skip + limit) < total
+            has_more=cache_payload["has_more"]
         )
         
     except Exception as e:
@@ -428,6 +555,8 @@ async def update_post(
                 {"_id": ObjectId(post_id)},
                 {"$set": update_dict}
             )
+            cache_service.invalidate_prefix("community_posts")
+            cache_service.invalidate_prefix("community_stats")
         
         # Return updated post
         return get_post(post_id, current_user, db)
@@ -461,6 +590,8 @@ async def delete_post(
             {"_id": ObjectId(post_id)},
             {"$set": {"is_active": False, "updated_at": datetime.utcnow()}}
         )
+        cache_service.invalidate_prefix("community_posts")
+        cache_service.invalidate_prefix("community_stats")
         
         return {"message": "Post deleted successfully"}
         
@@ -507,6 +638,7 @@ async def toggle_like_post(
             {"_id": ObjectId(post_id)},
             {"$set": {"likes": likes}}
         )
+        cache_service.invalidate_prefix("community_posts")
         
         return LikeResponse(
             success=True,
@@ -557,6 +689,7 @@ async def toggle_save_post(
             {"_id": ObjectId(post_id)},
             {"$set": {"saves": saves}}
         )
+        cache_service.invalidate_prefix("community_posts")
         
         return SaveResponse(
             success=True,
@@ -622,6 +755,8 @@ async def create_comment(
                 {"$inc": {"replies_count": 1}}
             )
         
+        cache_service.invalidate_prefix("community_posts")
+
         # Get user profile
         user_profile = get_user_profile(current_user.id, db)
         
@@ -738,6 +873,12 @@ async def get_community_stats(
 ):
     """Get community statistics"""
     try:
+        cache_key = "global"
+        cached_stats = cache_service.get("community_stats", cache_key)
+        if cached_stats:
+            logger.debug("Serving community stats from cache")
+            return PostStats(**cached_stats)
+
         # Total posts
         total_posts = db.community_posts.count_documents({"is_active": True})
         
@@ -768,13 +909,16 @@ async def get_community_stats(
         ]
         active_users_result = list(db.community_posts.aggregate(active_users_pipeline))
         active_users = active_users_result[0]["count"] if active_users_result else 0
+
+        stats_payload = {
+            "total_posts": total_posts,
+            "posts_today": posts_today,
+            "trending_tags": trending_tags,
+            "active_users": active_users,
+        }
+        cache_service.set("community_stats", cache_key, stats_payload, ttl_seconds=180)
         
-        return PostStats(
-            total_posts=total_posts,
-            posts_today=posts_today,
-            trending_tags=trending_tags,
-            active_users=active_users
-        )
+        return PostStats(**stats_payload)
         
     except Exception as e:
         logger.error(f"Error getting community stats: {e}")

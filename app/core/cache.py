@@ -96,6 +96,22 @@ class CacheService:
         except Exception as e:
             logger.error(f"Cache delete error: {e}")
             return False
+
+    def invalidate_prefix(self, prefix: str) -> int:
+        """Delete all cached entries for a prefix"""
+        if not self.is_available:
+            return 0
+
+        try:
+            pattern = f"skinsense:{prefix}:*"
+            keys = self.redis_client.keys(pattern)
+            if not keys:
+                return 0
+            self.redis_client.delete(*keys)
+            return len(keys)
+        except Exception as e:
+            logger.error(f"Cache prefix invalidation error: {e}")
+            return 0
     
     def invalidate_user_cache(self, user_id: str):
         """Invalidate all cache entries for a user"""
