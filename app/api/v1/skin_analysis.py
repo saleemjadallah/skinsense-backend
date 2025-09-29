@@ -368,9 +368,17 @@ async def get_user_analyses(
     """Get user's skin analyses"""
     
     # CRITICAL FIX: Check both ObjectId and string formats for user_id
+    # Also filter out failed analyses to ensure we only return analyses with data
     user_oid = ObjectId(str(current_user.id))
     analyses = list(db.skin_analyses.find(
-        {"user_id": {"$in": [user_oid, str(current_user.id)]}}
+        {
+            "user_id": {"$in": [user_oid, str(current_user.id)]},
+            # Only return analyses that have data (exclude failed ones)
+            "$or": [
+                {"status": {"$in": ["completed", "awaiting_ai"]}},
+                {"orbo_response": {"$exists": True, "$ne": None}}
+            ]
+        }
     ).sort("created_at", -1).skip(skip).limit(limit))
     
     return [
@@ -392,6 +400,49 @@ async def get_user_analyses(
         )
         for analysis in analyses
     ]
+
+@router.get("/latest-successful", response_model=SkinAnalysisResponse)
+async def get_latest_successful_analysis(
+    current_user: UserModel = Depends(get_current_active_user),
+    db: Database = Depends(get_database)
+):
+    """Get user's latest successful skin analysis (with ORBO data)"""
+    
+    user_oid = ObjectId(str(current_user.id))
+    
+    # Find the most recent analysis with actual data
+    analysis = db.skin_analyses.find_one(
+        {
+            "user_id": {"$in": [user_oid, str(current_user.id)]},
+            # Must have ORBO response data
+            "orbo_response": {"$exists": True, "$ne": None},
+            # Exclude failed analyses
+            "status": {"$ne": "failed"}
+        },
+        sort=[("created_at", -1)]
+    )
+    
+    if not analysis:
+        raise HTTPException(
+            status_code=404,
+            detail="No successful analyses found"
+        )
+    
+    return SkinAnalysisResponse(
+        id=str(analysis["_id"]),
+        user_id=str(analysis["user_id"]),
+        image_url=analysis["image_url"],
+        thumbnail_url=analysis.get("thumbnail_url"),
+        analysis_complete=bool(analysis.get("orbo_response")),
+        created_at=analysis["created_at"],
+        is_baseline=analysis.get("is_baseline", False),
+        orbo_response=analysis.get("orbo_response"),
+        ai_feedback=(
+            analysis.get("ai_feedback").get("summary")
+            if isinstance(analysis.get("ai_feedback"), dict)
+            else analysis.get("ai_feedback")
+        )
+    )
 
 @router.get("/{analysis_id}", response_model=SkinAnalysisDetail)
 async def get_analysis_detail(
