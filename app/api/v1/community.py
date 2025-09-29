@@ -93,16 +93,15 @@ async def create_post_json(
 ):
     """Create a new community post (JSON version without image support)"""
     
-    # Check if user can post (temporarily disabled for testing)
-    # TODO: Re-enable premium check after testing
-    # if not SubscriptionService.can_post_community(current_user):
-    #     raise HTTPException(
-    #         status_code=status.HTTP_403_FORBIDDEN,
-    #         detail={
-    #             "message": "Community posting is a premium feature",
-    #             "upgrade_prompt": "Upgrade to Premium to share your skincare journey and connect with the community!"
-    #         }
-    #     )
+    # Check if user can post (premium only)
+    if not SubscriptionService.can_post_community(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": "Community posting is a premium feature",
+                "upgrade_prompt": "Upgrade to Premium to share your skincare journey and connect with the community!"
+            }
+        )
     
     try:
         # Log incoming post data
@@ -160,24 +159,38 @@ async def create_post(
     content: str = Form(...),
     post_type: str = Form("post"),
     is_anonymous: str = Form("false"),
-    tags: Optional[List[str]] = Form(default=None),
-    images: Optional[List[UploadFile]] = File(default=None),
+    tags: List[str] = Form(default=[]),
+    images: List[UploadFile] = File(default=[]),
     current_user: UserModel = Depends(get_current_active_user),
     db: Database = Depends(get_database)
 ):
     """Create a new community post with optional image uploads"""
-    
-    # Check if user can post (temporarily disabled for testing)
-    # TODO: Re-enable premium check after testing
-    # if not SubscriptionService.can_post_community(current_user):
-    #     raise HTTPException(
-    #         status_code=status.HTTP_403_FORBIDDEN,
-    #         detail={
-    #             "message": "Community posting is a premium feature",
-    #             "upgrade_prompt": "Upgrade to Premium to share your skincare journey and connect with the community!"
-    #         }
-    #     )
-    
+
+    # Debug logging for incoming request
+    logger.info("=" * 60)
+    logger.info("CREATE POST ENDPOINT CALLED (FormData)")
+    logger.info(f"User: {current_user.email} (ID: {current_user.id})")
+    logger.info(f"Content length: {len(content)} chars")
+    logger.info(f"Images param type: {type(images)}")
+    logger.info(f"Images param: {images}")
+    if images:
+        logger.info(f"Number of images: {len(images)}")
+        for i, img in enumerate(images):
+            logger.info(f"Image {i}: filename={img.filename}, content_type={img.content_type}, size={img.size if hasattr(img, 'size') else 'unknown'}")
+    else:
+        logger.info("No images in request")
+    logger.info("=" * 60)
+
+    # Check if user can post (premium only)
+    if not SubscriptionService.can_post_community(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": "Community posting is a premium feature",
+                "upgrade_prompt": "Upgrade to Premium to share your skincare journey and connect with the community!"
+            }
+        )
+
     try:
         # Parse is_anonymous from string to boolean
         is_anonymous_bool = is_anonymous.lower() == "true"
@@ -188,7 +201,7 @@ async def create_post(
         # Parse tags if they come as a single string
         if isinstance(tags, str):
             tags = [tag.strip() for tag in tags.split(',') if tag.strip()]
-        elif tags is None:
+        elif not tags:
             tags = []
 
         # Handle image upload if provided
@@ -744,16 +757,15 @@ async def create_comment(
 ):
     """Create a comment on a post"""
     
-    # Check if user can comment (temporarily disabled for testing)
-    # TODO: Re-enable premium check after testing
-    # if not SubscriptionService.can_post_community(current_user):
-    #     raise HTTPException(
-    #         status_code=status.HTTP_403_FORBIDDEN,
-    #         detail={
-    #             "message": "Commenting is a premium feature",
-    #             "upgrade_prompt": "Upgrade to Premium to engage with the community!"
-    #         }
-    #     )
+    # Check if user can comment (premium only)
+    if not SubscriptionService.can_post_community(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": "Commenting is a premium feature",
+                "upgrade_prompt": "Upgrade to Premium to engage with the community!"
+            }
+        )
     
     try:
         # Verify post exists
