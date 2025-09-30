@@ -160,14 +160,14 @@ async def export_user_data(
 
 @router.get("/export/summary")
 async def get_export_summary(
-    current_user: Dict[str, Any] = Depends(get_current_user),
-    db=Depends(get_database)
+    current_user: UserModel = Depends(get_current_user)
 ) -> Dict[str, Any]:
     """
     Get a summary of what data will be exported.
     """
     try:
-        user_id = current_user["_id"]
+        db = get_database()
+        user_id = str(current_user.id)
         user_oid = ObjectId(user_id)
         
         summary = {
