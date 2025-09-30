@@ -80,16 +80,15 @@ class PerplexityRecommendationService:
         logger.info(f"User location: {user_location}")
 
         try:
-            # Step 1: Check user's cached favorites
-            cached_recommendations = await self._get_cached_recommendations(
-                user, skin_analysis, db, limit=2
-            )
+            # Step 1: DISABLED - Skip cached favorites to prioritize fresh Search API results
+            # The user_product_interactions cache was causing duplicates
+            cached_recommendations = []
 
             # Step 2: Get fresh recommendations from Perplexity Search API
-            fresh_limit = limit - len(cached_recommendations)
+            fresh_limit = limit
             fresh_recommendations = []
 
-            if fresh_limit > 0 and self.api_key:
+            if self.api_key:
                 logger.info(f"Calling Perplexity Search API for {fresh_limit} fresh recommendations")
                 fresh_recommendations = await self._search_products_multi_query(
                     skin_analysis, user, user_location, limit=fresh_limit
@@ -104,6 +103,8 @@ class PerplexityRecommendationService:
 
             # Step 3: Combine results
             all_recommendations = cached_recommendations + fresh_recommendations
+
+            logger.info(f"[RECOMMENDATIONS] Cached: {len(cached_recommendations)}, Fresh: {len(fresh_recommendations)}, Total: {len(all_recommendations)}")
 
             # Step 4: Validate and enhance products
             validated_recommendations = []
@@ -134,6 +135,9 @@ class PerplexityRecommendationService:
                 validated_recommendations = self._create_fallback_products(skin_analysis, user_location)
 
             # Step 6: Build complete response
+            logger.info(f"[FINAL] Returning {len(validated_recommendations[:limit])} products to user")
+            logger.info(f"[FINAL] Product names: {[p.get('name', 'Unknown')[:40] for p in validated_recommendations[:limit]]}")
+
             return {
                 "recommendations": validated_recommendations[:limit],
                 "routine_suggestions": self._build_routine_from_products(validated_recommendations),
@@ -181,7 +185,8 @@ class PerplexityRecommendationService:
                 logger.warning("No search queries generated")
                 return []
 
-            logger.info(f"Executing {len(queries)} parallel searches")
+            logger.info(f"[SEARCH API] Executing {len(queries)} parallel searches")
+            logger.info(f"[SEARCH API] Queries: {queries}")
 
             # Execute searches with async client
             async with AsyncPerplexity(api_key=self.api_key) as client:
@@ -195,6 +200,9 @@ class PerplexityRecommendationService:
 
                 # Parse results from all queries
                 all_products = []
+
+                logger.info(f"[SEARCH API] Raw search.results type: {type(search.results)}")
+                logger.info(f"[SEARCH API] Raw search.results length: {len(search.results) if hasattr(search.results, '__len__') else 'N/A'}")
 
                 # Handle multi-query results (array of result arrays)
                 if isinstance(search.results, list) and len(search.results) > 0:
@@ -217,7 +225,8 @@ class PerplexityRecommendationService:
                 # Deduplicate by product URL
                 unique_products = self._deduplicate_products(all_products)
 
-                logger.info(f"Found {len(unique_products)} unique products from {len(all_products)} total results")
+                logger.info(f"[SEARCH API] Found {len(unique_products)} unique products from {len(all_products)} total results")
+                logger.info(f"[SEARCH API] Product names: {[p.get('name', 'Unknown')[:50] for p in unique_products[:10]]}")
 
                 return unique_products[:limit]
 
