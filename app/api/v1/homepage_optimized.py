@@ -11,12 +11,12 @@ from app.database import get_database
 from app.api.deps import get_current_active_user
 from app.models.user import UserModel
 from app.core.cache import cache_service
-from app.services.routine_service import RoutineService
+# from app.services.routine_service import RoutineService  # Disabled - using new AI routines
 from app.services.goal_service import GoalService
 from app.services.progress_service import ProgressService
 
 # Initialize services
-routine_service = RoutineService()
+# routine_service = RoutineService()  # Disabled - using new AI routines
 goal_service = GoalService()
 progress_service = ProgressService()
 

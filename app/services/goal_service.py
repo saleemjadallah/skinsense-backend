@@ -194,13 +194,14 @@ class GoalService:
         if self.db is None:
             self.db = get_database()
     
-    @property
-    def routine_service(self):
-        """Lazy loading of routine service to avoid circular imports"""
-        if self._routine_service is None:
-            from .routine_service import RoutineService
-            self._routine_service = RoutineService()
-        return self._routine_service
+    # @property
+    # def routine_service(self):
+    #     """Lazy loading of routine service to avoid circular imports"""
+    #     # Disabled - old routine service replaced with new AI routines
+    #     if self._routine_service is None:
+    #         from .routine_service import RoutineService
+    #         self._routine_service = RoutineService()
+    #     return self._routine_service
     
     def generate_goals(
         self,
