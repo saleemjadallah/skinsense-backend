@@ -160,7 +160,7 @@ async def create_post(
     post_type: str = Form("post"),
     is_anonymous: str = Form("false"),
     tags: List[str] = Form(default=[]),
-    images: List[UploadFile] = File(default=[]),
+    images: Optional[List[UploadFile]] = File(None),
     current_user: UserModel = Depends(get_current_active_user),
     db: Database = Depends(get_database)
 ):
@@ -172,13 +172,17 @@ async def create_post(
     logger.info(f"User: {current_user.email} (ID: {current_user.id})")
     logger.info(f"Content length: {len(content)} chars")
     logger.info(f"Images param type: {type(images)}")
-    logger.info(f"Images param: {images}")
+    logger.info(f"Images param value: {images}")
+    logger.info(f"Images is None: {images is None}")
     if images:
-        logger.info(f"Number of images: {len(images)}")
+        logger.info(f"Number of images received: {len(images)}")
         for i, img in enumerate(images):
-            logger.info(f"Image {i}: filename={img.filename}, content_type={img.content_type}, size={img.size if hasattr(img, 'size') else 'unknown'}")
+            if img and img.filename:
+                logger.info(f"Image {i}: filename={img.filename}, content_type={img.content_type}")
+            else:
+                logger.info(f"Image {i}: empty or invalid")
     else:
-        logger.info("No images in request")
+        logger.info("No images in request (images is None or empty)")
     logger.info("=" * 60)
 
     # Check if user can post (premium only)
@@ -206,43 +210,46 @@ async def create_post(
 
         # Handle image upload if provided
         image_url = None
-        logger.info(f"Images received: {images}")
-        logger.info(f"Number of images: {len(images) if images else 0}")
 
         if images and len(images) > 0:
-            try:
-                logger.info(f"First image filename: {images[0].filename}")
-                logger.info(f"First image content type: {images[0].content_type}")
+            first_image = images[0]
+            logger.info(f"Processing first image: filename={first_image.filename if first_image else 'None'}")
 
-                if images[0].filename:
-                    # Upload first image to S3
-                    image = images[0]
-                    file_content = await image.read()
+            # Check if the image has actual content (not just an empty upload field)
+            if first_image and first_image.filename and first_image.filename.strip():
+                try:
+                    # Read image content
+                    file_content = await first_image.read()
                     logger.info(f"Image file size: {len(file_content)} bytes")
 
-                    try:
-                        image_url = await s3_service.upload_community_image(
-                            file_content,
-                            image.filename,
-                            f"community/{current_user.id}"
-                        )
-                        logger.info(f"Image uploaded successfully to: {image_url}")
+                    # Only proceed if we have actual image data
+                    if len(file_content) > 0:
+                        try:
+                            image_url = await s3_service.upload_community_image(
+                                file_content,
+                                first_image.filename,
+                                f"community/{current_user.id}"
+                            )
+                            logger.info(f"✅ Image uploaded successfully to: {image_url}")
 
-                        # Check if S3 was disabled (placeholder URL)
-                        if image_url and image_url.startswith("s3-disabled://"):
-                            logger.warning("S3 is not configured - image upload skipped")
-                            image_url = None  # Don't save placeholder URLs
-                    except Exception as upload_error:
-                        logger.error(f"S3 upload error: {upload_error}")
-                        logger.error(f"S3 upload error details: {str(upload_error)}")
-                        # Continue without image rather than failing the entire post
-                        image_url = None
-            except Exception as image_error:
-                logger.error(f"Error processing image: {image_error}")
-                logger.error(f"Image processing error details: {str(image_error)}")
-                image_url = None
+                            # Check if S3 was disabled (placeholder URL)
+                            if image_url and image_url.startswith("s3-disabled://"):
+                                logger.warning("⚠️ S3 is not configured - image upload skipped")
+                                image_url = None  # Don't save placeholder URLs
+                        except Exception as upload_error:
+                            logger.error(f"❌ S3 upload error: {upload_error}")
+                            logger.error(f"Error details: {str(upload_error)}")
+                            # Continue without image rather than failing the entire post
+                            image_url = None
+                    else:
+                        logger.warning("⚠️ Image file is empty (0 bytes)")
+                except Exception as image_error:
+                    logger.error(f"❌ Error reading image file: {image_error}")
+                    image_url = None
+            else:
+                logger.info("ℹ️ No valid image filename provided")
         else:
-            logger.info("No images provided in the request")
+            logger.info("ℹ️ No images provided in the request")
 
         # Create post document
         logger.info(f"Creating post document with image_url: {image_url}")
