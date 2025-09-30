@@ -6,13 +6,13 @@ from bson import ObjectId
 from pymongo.database import Database
 
 from app.models.plan import PlanModel, PlanProgress, WeeklyMilestone, PlanTemplate
-from app.models.routine import RoutineModel
+# from app.models.routine import RoutineModel  # Disabled - old routine model
 from app.models.goal import GoalModel
 from app.models.user import UserModel
 from app.schemas.plan import PlanCreateRequest, PlanUpdateRequest, PlanProgressUpdate
 from app.database import get_database
 from app.services.openai_service import OpenAIService
-from app.services.routine_service import RoutineService
+# from app.services.routine_service import RoutineService # Disabled - old routine service
 from app.services.goal_service import GoalService
 from app.utils.database_manager import DatabaseManager
 from app.utils.datetime_util import DateTimeUtil
@@ -29,7 +29,7 @@ class PlanService:
         self._ensure_db_connection()
             
         self.openai_service = OpenAIService()
-        self.routine_service = RoutineService()
+        # self.routine_service = RoutineService() # Disabled
         self.goal_service = GoalService()
     
     def _ensure_db_connection(self):

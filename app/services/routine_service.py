@@ -6,10 +6,8 @@ from bson import ObjectId
 from pymongo.database import Database
 from app.utils.date_utils import get_utc_now
 
-from app.models.routine import (
-    RoutineModel, RoutineStep, RoutineProduct, 
-    EffectivenessScores, RoutineCompletion
-)
+# Old routine models disabled - using new PersonalizedRoutine model
+# from app.models.routine import RoutineModel, RoutineStep, RoutineProduct, EffectivenessScores, RoutineCompletion
 from app.models.user import UserModel
 from app.schemas.routine import RoutineGenerateRequest
 from app.database import get_database

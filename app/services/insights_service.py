@@ -15,7 +15,7 @@ from ..models.insights import (
 )
 from ..models.user import UserModel
 from ..models.skin_analysis import SkinAnalysisModel
-from ..models.routine import RoutineModel, RoutineCompletion
+# from ..models.routine import RoutineModel, RoutineCompletion  # Disabled - old routine model
 from ..models.goal import GoalModel, GoalProgress
 from ..database import db, get_database
 from ..core.config import settings

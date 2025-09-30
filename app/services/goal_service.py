@@ -8,7 +8,7 @@ from collections import defaultdict
 from ..models.goal import GoalModel, Milestone, GoalProgress, Achievement, GoalTemplate
 from ..models.user import UserModel
 from ..models.skin_analysis import SkinAnalysisModel
-from ..models.routine import RoutineModel
+# from ..models.routine import RoutineModel  # Disabled - old routine model
 from ..schemas.goal import (
     GoalCreate, GoalUpdate, GoalProgressUpdate,
     GoalResponse, GoalListResponse, GoalProgressResponse,
@@ -17,7 +17,7 @@ from ..schemas.goal import (
 )
 from ..database import get_database
 from .openai_service import OpenAIService
-from .routine_service import RoutineService
+# from .routine_service import RoutineService # Disabled - old routine service
 
 logger = logging.getLogger(__name__)
 

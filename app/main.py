@@ -12,7 +12,8 @@ import asyncio
 from app.core.config import settings
 from app.database import connect_to_mongo, close_mongo_connection, db
 from app.core.redis import get_redis, close_redis
-from app.api.v1 import auth, users, skin_analysis, products, community, routines, notifications, goals, plans, monitoring, learning, insights, homepage_optimized, pal, achievements, affiliate, batch, subscription, user_data
+from app.api.v1 import auth, users, skin_analysis, products, community, routines_ai, notifications, goals, plans, monitoring, learning, insights, homepage_optimized, pal, achievements, affiliate, batch, subscription, user_data
+# Old routines module disabled in favor of new AI-powered routines_ai
 from app.api.v1.endpoints import calendar, reminders
 from app.core.monitoring import setup_metrics  # track_active_users
 
@@ -105,7 +106,9 @@ app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(skin_analysis.router, prefix="/api/v1/analysis", tags=["Skin Analysis"])
 app.include_router(products.router, prefix="/api/v1/products", tags=["Products"])
 app.include_router(community.router, prefix="/api/v1/community", tags=["Community"])
-app.include_router(routines.router, prefix="/api/v1/routines", tags=["Routines"])
+# Old routines endpoint disabled - using new AI routines instead
+# app.include_router(routines.router, prefix="/api/v1/routines", tags=["Routines"])
+app.include_router(routines_ai.router, prefix="/api/v1/routines", tags=["AI Personalized Routines"])
 app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["Notifications"])
 app.include_router(goals.router, prefix="/api/v1/goals", tags=["Goals"])
 app.include_router(achievements.router, prefix="/api/v1", tags=["Achievements"])
