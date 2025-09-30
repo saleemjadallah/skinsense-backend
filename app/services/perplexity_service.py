@@ -57,12 +57,13 @@ class PerplexityRecommendationService:
 
         # Rate limiting settings
         self.requests_per_minute = 20
-        self.max_concurrent_searches = 3
+        self.max_concurrent_searches = 5
         self.delay_between_batches = 1.0
 
         # Search settings
-        self.max_results_per_query = 5
+        self.max_results_per_query = 10  # Increased from 5 to get more results per query
         self.max_tokens_per_page = 1024  # Balance between detail and speed
+        self.min_products_to_return = 6  # Minimum products to return
 
     async def get_personalized_recommendations(
         self,
@@ -290,10 +291,22 @@ class PerplexityRecommendationService:
                 f"calming centella sensitive skin products for {skin_type} available {city} with price"
             )
 
-        # If no specific concerns, search for general routine essentials
-        if not queries:
+        # Always add general routine essentials to ensure variety (even if no concerns)
+        if len(queries) < 3:
             queries.append(
                 f"best skincare routine essentials for {skin_type} skin {age_range} available {zip_code} with prices"
+            )
+
+        # Add cleanser query if we still don't have enough
+        if len(queries) < 3:
+            queries.append(
+                f"gentle facial cleanser for {skin_type} skin available in {city} with price"
+            )
+
+        # Add moisturizer query for more variety
+        if len(queries) < 4:
+            queries.append(
+                f"best daily moisturizer for {skin_type} skin {age_range} near {zip_code} with buy link"
             )
 
         logger.info(f"Built {len(queries)} targeted search queries")
