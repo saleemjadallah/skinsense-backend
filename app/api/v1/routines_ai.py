@@ -141,7 +141,8 @@ def get_user_routines(
 ):
     """Get user's saved routines"""
 
-    query = {"user_id": current_user.id, "is_active": True}
+    # Convert user_id to string to match database format
+    query = {"user_id": str(current_user.id), "is_active": True}
 
     if routine_type:
         query["routine_type"] = routine_type
@@ -187,7 +188,7 @@ def get_routine_detail(
 
     try:
         routine = db.personalized_routines.find_one(
-            {"_id": ObjectId(routine_id), "user_id": current_user.id}
+            {"_id": ObjectId(routine_id), "user_id": str(current_user.id)}
         )
     except Exception as e:
         raise HTTPException(
@@ -243,7 +244,7 @@ def mark_routine_used(
 
     try:
         result = db.personalized_routines.update_one(
-            {"_id": ObjectId(routine_id), "user_id": current_user.id},
+            {"_id": ObjectId(routine_id), "user_id": str(current_user.id)},
             {"$inc": {"times_used": 1}, "$set": {"last_used": datetime.utcnow()}},
         )
     except Exception as e:
@@ -269,7 +270,7 @@ def toggle_favorite(
 
     try:
         routine = db.personalized_routines.find_one(
-            {"_id": ObjectId(routine_id), "user_id": current_user.id}
+            {"_id": ObjectId(routine_id), "user_id": str(current_user.id)}
         )
     except Exception as e:
         raise HTTPException(
@@ -301,7 +302,7 @@ def rate_routine(
 
     try:
         result = db.personalized_routines.update_one(
-            {"_id": ObjectId(routine_id), "user_id": current_user.id},
+            {"_id": ObjectId(routine_id), "user_id": str(current_user.id)},
             {
                 "$set": {
                     "user_rating": request.rating,
@@ -333,7 +334,7 @@ def delete_routine(
 
     try:
         result = db.personalized_routines.update_one(
-            {"_id": ObjectId(routine_id), "user_id": current_user.id},
+            {"_id": ObjectId(routine_id), "user_id": str(current_user.id)},
             {"$set": {"is_active": False, "updated_at": datetime.utcnow()}},
         )
     except Exception as e:
