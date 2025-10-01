@@ -309,8 +309,13 @@ Generate the routine now:
             )
             steps.append(step)
 
-        user_id = user.get("_id") if isinstance(user.get("_id"), ObjectId) else ObjectId(user.get("_id"))
-        analysis_id = latest_analysis.get("_id") if isinstance(latest_analysis.get("_id"), ObjectId) else ObjectId(latest_analysis.get("_id"))
+        # Convert ObjectIds to strings for Pydantic v2 compatibility
+        user_id = user.get("_id")
+        if isinstance(user_id, ObjectId):
+            user_id = str(user_id)
+        analysis_id = latest_analysis.get("_id")
+        if isinstance(analysis_id, ObjectId):
+            analysis_id = str(analysis_id)
 
         routine = PersonalizedRoutine(
             user_id=user_id,
@@ -402,7 +407,10 @@ Generate the routine now:
         self, user: Dict[str, Any], routine_type: str
     ) -> PersonalizedRoutine:
         """Return safe fallback routine if AI generation fails"""
-        user_id = user.get("_id") if isinstance(user.get("_id"), ObjectId) else ObjectId(user.get("_id"))
+        # Convert user_id to string for Pydantic v2 compatibility
+        user_id = user.get("_id")
+        if isinstance(user_id, ObjectId):
+            user_id = str(user_id)
         profile = user.get("profile", {})
 
         # Simple fallback routine based on routine type
