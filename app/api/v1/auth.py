@@ -120,7 +120,7 @@ async def login(
     if not user or not verify_password(user_credentials.password, user["password_hash"]):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password"
+            detail="The password you entered is incorrect. Please try again or reset your password."
         )
     
     if not user.get("is_active", True):

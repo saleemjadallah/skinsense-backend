@@ -1,6 +1,6 @@
 """
 Perplexity Search API Service for Product Recommendations
-Updated: 2025-09-30 - Upgraded to use Perplexity Search API for better product discovery
+Updated: 2025-10-01 - Added hybrid product image extraction with og:image and UI Avatars
 
 This service uses Perplexity's Search API to find real, purchasable skincare products
 based on ORBO AI skin analysis with 10 key metrics (0-100 scores).
@@ -13,8 +13,11 @@ import re
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote, urlparse
 
+import aiohttp
 from bson import ObjectId
+from bs4 import BeautifulSoup
 from perplexity import AsyncPerplexity
 from pymongo.database import Database
 
@@ -64,6 +67,11 @@ class PerplexityRecommendationService:
         self.max_results_per_query = 10  # Increased from 5 to get more results per query
         self.max_tokens_per_page = 1024  # Balance between detail and speed
         self.min_products_to_return = 6  # Minimum products to return
+
+        # Image extraction settings
+        self.image_cache_ttl_hours = 168  # Cache images for 1 week
+        self.image_fetch_timeout = 5  # Timeout for fetching product pages (seconds)
+        self.max_concurrent_image_fetches = 3  # Limit concurrent image extractions
 
     async def get_personalized_recommendations(
         self,
@@ -124,11 +132,12 @@ class PerplexityRecommendationService:
                 # Ensure URLs
                 self._ensure_product_urls(product)
 
-                # Ensure image URL
-                if not product.get('imageUrl'):
-                    product['imageUrl'] = self._generate_product_image_url(product)
-
                 validated_recommendations.append(product)
+
+            # Step 4.5: Enhance product images in parallel (async)
+            validated_recommendations = await self._enhance_product_images(
+                validated_recommendations, db
+            )
 
             # Step 5: Fallback if no recommendations
             if not validated_recommendations:
@@ -736,12 +745,333 @@ class PerplexityRecommendationService:
 
         return f"https://www.google.com/search?q={brand}+{name}+buy"
 
-    def _generate_product_image_url(self, product: Dict[str, Any]) -> str:
-        """Generate placeholder product image"""
-        import hashlib
-        seed_text = f"{product.get('brand', '')}_{product.get('name', '')}"
-        seed = int(hashlib.md5(seed_text.encode()).hexdigest()[:6], 16) % 1000
-        return f"https://picsum.photos/seed/{seed}/400/400"
+    async def _enhance_product_images(
+        self,
+        products: List[Dict[str, Any]],
+        db: Database
+    ) -> List[Dict[str, Any]]:
+        """
+        Enhance product images using hybrid approach:
+        1. Check cache for existing image URL
+        2. Try to extract og:image from product URL
+        3. Fallback to UI Avatars with category-based colors
+
+        Args:
+            products: List of product dictionaries
+            db: Database connection for caching
+
+        Returns:
+            Products with imageUrl field populated
+        """
+        try:
+            # Process images in parallel with concurrency limit
+            semaphore = asyncio.Semaphore(self.max_concurrent_image_fetches)
+
+            async def process_product_image(product: Dict[str, Any]) -> Dict[str, Any]:
+                async with semaphore:
+                    product['imageUrl'] = await self._get_product_image(product, db)
+                    return product
+
+            # Process all products concurrently
+            enhanced_products = await asyncio.gather(
+                *[process_product_image(p) for p in products],
+                return_exceptions=True
+            )
+
+            # Filter out any exceptions and ensure all have images
+            result = []
+            for item in enhanced_products:
+                if isinstance(item, Exception):
+                    logger.error(f"Failed to enhance product image: {item}")
+                    continue
+                if not item.get('imageUrl'):
+                    item['imageUrl'] = self._generate_ui_avatar_url(item)
+                result.append(item)
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Image enhancement batch failed: {e}", exc_info=True)
+            # Fallback: add UI Avatars to all products
+            for product in products:
+                if not product.get('imageUrl'):
+                    product['imageUrl'] = self._generate_ui_avatar_url(product)
+            return products
+
+    async def _get_product_image(
+        self,
+        product: Dict[str, Any],
+        db: Database
+    ) -> str:
+        """
+        Get product image URL using hybrid approach with caching.
+
+        Priority:
+        1. Check MongoDB cache (synchronous PyMongo)
+        2. Extract og:image from product URL (async aiohttp)
+        3. Fallback to UI Avatars (synchronous)
+
+        Args:
+            product: Product dictionary with productUrl
+            db: Database connection (PyMongo)
+
+        Returns:
+            Image URL string
+        """
+        product_url = product.get('productUrl', '')
+
+        # Step 1: Check cache (synchronous PyMongo call)
+        if product_url:
+            cached_image = self._get_cached_product_image(product_url, db)
+            if cached_image:
+                logger.debug(f"Using cached image for {product.get('name', 'unknown')}")
+                return cached_image
+
+        # Step 2: Try to extract og:image from product URL (async)
+        if product_url and self._is_valid_product_url(product_url):
+            extracted_image = await self._extract_og_image(product_url)
+            if extracted_image:
+                logger.info(f"Extracted og:image for {product.get('name', 'unknown')}")
+                # Cache the extracted image (synchronous PyMongo call)
+                self._cache_product_image(product_url, extracted_image, db)
+                return extracted_image
+
+        # Step 3: Fallback to UI Avatars (synchronous)
+        ui_avatar_url = self._generate_ui_avatar_url(product)
+        logger.debug(f"Using UI Avatar for {product.get('name', 'unknown')}")
+        return ui_avatar_url
+
+    def _get_cached_product_image(
+        self,
+        product_url: str,
+        db: Database
+    ) -> Optional[str]:
+        """
+        Retrieve cached product image URL from MongoDB (synchronous).
+
+        Args:
+            product_url: Product page URL
+            db: Database connection (PyMongo)
+
+        Returns:
+            Cached image URL or None
+        """
+        try:
+            cache_entry = db.product_image_cache.find_one({
+                "product_url": product_url,
+                "expires_at": {"$gt": datetime.now(timezone.utc)}
+            })
+
+            if cache_entry:
+                return cache_entry.get("image_url")
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Failed to retrieve cached image: {e}")
+            return None
+
+    def _cache_product_image(
+        self,
+        product_url: str,
+        image_url: str,
+        db: Database
+    ):
+        """
+        Cache product image URL in MongoDB with TTL (synchronous).
+
+        Args:
+            product_url: Product page URL
+            image_url: Extracted image URL
+            db: Database connection (PyMongo)
+        """
+        try:
+            cache_entry = {
+                "product_url": product_url,
+                "image_url": image_url,
+                "created_at": datetime.now(timezone.utc),
+                "expires_at": datetime.now(timezone.utc) + timedelta(hours=self.image_cache_ttl_hours)
+            }
+
+            # Upsert to avoid duplicates
+            db.product_image_cache.update_one(
+                {"product_url": product_url},
+                {"$set": cache_entry},
+                upsert=True
+            )
+
+            logger.debug(f"Cached image URL for {product_url}")
+
+        except Exception as e:
+            logger.error(f"Failed to cache product image: {e}")
+
+    async def _extract_og_image(self, url: str) -> Optional[str]:
+        """
+        Extract Open Graph image from product page.
+
+        Args:
+            url: Product page URL
+
+        Returns:
+            og:image URL or None
+        """
+        try:
+            timeout = aiohttp.ClientTimeout(total=self.image_fetch_timeout)
+
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    url,
+                    headers={
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                    },
+                    allow_redirects=True
+                ) as response:
+
+                    if response.status != 200:
+                        logger.warning(f"Failed to fetch product page: {url} (status: {response.status})")
+                        return None
+
+                    html = await response.text()
+                    soup = BeautifulSoup(html, 'html.parser')
+
+                    # Try multiple Open Graph image meta tags
+                    og_image_tags = [
+                        soup.find('meta', property='og:image'),
+                        soup.find('meta', property='og:image:url'),
+                        soup.find('meta', property='og:image:secure_url'),
+                        soup.find('meta', name='twitter:image'),
+                        soup.find('meta', itemprop='image'),
+                    ]
+
+                    for tag in og_image_tags:
+                        if tag and tag.get('content'):
+                            image_url = tag.get('content')
+
+                            # Validate image URL
+                            if self._is_valid_image_url(image_url):
+                                logger.info(f"Extracted image from {url}: {image_url[:100]}")
+                                return image_url
+
+                    logger.warning(f"No valid og:image found for {url}")
+                    return None
+
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout extracting image from {url}")
+            return None
+        except Exception as e:
+            logger.error(f"Failed to extract og:image from {url}: {e}")
+            return None
+
+    def _is_valid_product_url(self, url: str) -> bool:
+        """
+        Validate that URL is a real product page (not a search URL).
+
+        Args:
+            url: URL to validate
+
+        Returns:
+            True if valid product URL
+        """
+        if not url or len(url) < 10:
+            return False
+
+        # Skip generic search URLs
+        skip_patterns = [
+            '/search',
+            '/s?',
+            'google.com/search',
+            '/results',
+        ]
+
+        return not any(pattern in url.lower() for pattern in skip_patterns)
+
+    def _is_valid_image_url(self, url: str) -> bool:
+        """
+        Validate that URL points to an actual image.
+
+        Args:
+            url: Image URL to validate
+
+        Returns:
+            True if valid image URL
+        """
+        if not url or len(url) < 10:
+            return False
+
+        # Check for common image extensions or CDN patterns
+        valid_patterns = [
+            '.jpg', '.jpeg', '.png', '.webp', '.gif',
+            'cloudinary.com',
+            'cloudfront.net',
+            'shopify.com',
+            'sephora.com',
+            'ulta.com',
+            'target.com',
+            'amazon.com',
+        ]
+
+        url_lower = url.lower()
+        return any(pattern in url_lower for pattern in valid_patterns)
+
+    def _generate_ui_avatar_url(self, product: Dict[str, Any]) -> str:
+        """
+        Generate UI Avatars URL with category-based brand colors.
+
+        This creates professional-looking placeholder images with:
+        - Brand initials or single letter
+        - Category-specific background colors
+        - Consistent, deterministic output
+
+        Args:
+            product: Product dictionary with brand, name, category
+
+        Returns:
+            UI Avatars URL
+        """
+        brand = product.get('brand', product.get('name', 'Product'))
+        category = product.get('category', 'treatment')
+
+        # Get category-specific color
+        bg_color = self._get_category_color(category)
+
+        # URL encode brand name
+        name_param = quote(brand)
+
+        # Build UI Avatars URL with SkinSense branding
+        return (
+            f"https://ui-avatars.com/api/"
+            f"?name={name_param}"
+            f"&size=400"
+            f"&background={bg_color}"
+            f"&color=fff"
+            f"&bold=true"
+            f"&rounded=true"
+            f"&format=png"
+        )
+
+    def _get_category_color(self, category: str) -> str:
+        """
+        Get SkinSense brand color based on product category.
+
+        Args:
+            category: Product category
+
+        Returns:
+            Hex color code (without #)
+        """
+        # SkinSense brand color palette
+        category_colors = {
+            'cleanser': '4ECDC4',      # Teal - Fresh, clean
+            'serum': '6B73FF',         # Neural blue - Advanced, tech
+            'moisturizer': 'FF6B9D',   # Aurora pink - Hydrating, nurturing
+            'sunscreen': 'FFB347',     # Sun orange - Protection
+            'toner': '95E1D3',         # Mint - Refreshing
+            'mask': '9C27B0',          # Purple - Premium, treatment
+            'eye_care': 'FF8A80',      # Coral - Gentle, delicate
+            'treatment': 'E91E63',     # Primary magenta - Core brand
+        }
+
+        return category_colors.get(category, 'E91E63')  # Default to primary magenta
 
     def _estimate_compatibility_score(self, product: Dict[str, Any], skin_analysis: Dict[str, Any]) -> float:
         """Estimate compatibility score"""
