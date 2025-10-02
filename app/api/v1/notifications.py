@@ -293,7 +293,8 @@ async def get_notification_history(
                 status=n.get("status", "sent"),
                 error_message=n.get("error_message"),
                 is_read=n.get("is_read", False),
-                read_at=n.get("read_at")
+                read_at=n.get("read_at"),
+                data=n.get("data")
             )
             for n in notifications
         ]

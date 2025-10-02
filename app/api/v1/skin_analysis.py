@@ -25,8 +25,8 @@ from app.services.perplexity_service import perplexity_service
 from app.services.recommendation_service import recommendation_service
 from app.services.progress_service import progress_service
 from app.services.subscription_service import SubscriptionService
+from app.services.notification_service import notification_service
 from app.core.cache import cache_service
-from typing import Dict, Any
 import logging
 import json
 
@@ -891,6 +891,44 @@ async def save_orbo_sdk_result(
         logger.info(f"Update result - matched: {result.matched_count}, modified: {result.modified_count}")
         logger.info(f"Subscription data being saved: monthly_scans_used = {subscription_data['usage']['monthly_scans_used']}")
 
+        # Fetch previous analysis metrics for comparison before inserting new data
+        previous_analysis = db.skin_analyses.find_one(
+            {
+                "user_id": current_user.id,
+                "is_test": {"$ne": True},
+            },
+            sort=[("created_at", -1)],
+            projection={
+                "orbo_response.metrics": 1,
+                "metrics": 1,
+                "skin_metrics": 1,
+                "created_at": 1,
+            },
+        )
+
+        def normalize_previous_metrics(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+            if not raw or not isinstance(raw, dict):
+                return {}
+            legacy_key_map = {
+                'overall_health': 'overall_skin_health_score',
+                'overall': 'overall_skin_health_score',
+                'fine_lines': 'fine_lines_wrinkles',
+            }
+            normalized: Dict[str, Any] = {}
+            for key, value in raw.items():
+                target_key = legacy_key_map.get(key, key)
+                normalized[target_key] = value
+            return normalized
+
+        previous_metrics: Dict[str, Any] = {}
+        if previous_analysis:
+            raw_metrics = previous_analysis.get('orbo_response', {}).get('metrics')
+            if not raw_metrics:
+                raw_metrics = previous_analysis.get('metrics')
+            if not raw_metrics:
+                raw_metrics = previous_analysis.get('skin_metrics')
+            previous_metrics = normalize_previous_metrics(raw_metrics)
+
         # Handle both wrapped and direct formats for extracting images and annotations
         if 'raw_response' in orbo_data:
             # Wrapped format from mobile SDK
@@ -962,50 +1000,89 @@ async def save_orbo_sdk_result(
                 detail="Invalid ORBO scan: All metrics returned zero. Please try scanning again with better lighting."
             )
         
-        # Create ORBOMetrics from the SDK data - mapping ORBO concerns to our metrics
-        # Note: ORBO scores are 0-100 where higher = worse, we may need to invert some
-        # Also handle alternative names from ORBO (shine, uneven_skin, etc.)
-        
-        # Calculate overall skin health score as average of inverted problem scores
-        # This ensures we always have an overall score even if ORBO doesn't provide one
-        problem_scores = []
-        if 'acne' in orbo_scores: problem_scores.append(orbo_scores['acne'])
-        if 'dark_spots' in orbo_scores: problem_scores.append(orbo_scores['dark_spots'])
-        if 'dark_circle' in orbo_scores or 'dark_circles' in orbo_scores:
-            problem_scores.append(orbo_scores.get('dark_circle', orbo_scores.get('dark_circles', 30)))
-        if 'face_wrinkles' in orbo_scores or 'eye_wrinkles' in orbo_scores:
-            problem_scores.append(orbo_scores.get('face_wrinkles', orbo_scores.get('eye_wrinkles', 30)))
-        if 'redness' in orbo_scores: problem_scores.append(orbo_scores['redness'])
-        if 'uneven_skin' in orbo_scores: problem_scores.append(orbo_scores['uneven_skin'])
-        if 'skin_dullness' in orbo_scores or 'shine' in orbo_scores:
-            problem_scores.append(orbo_scores.get('skin_dullness', orbo_scores.get('shine', 30)))
-        
-        # Calculate overall score: 100 - average of problem scores
-        if problem_scores:
-            avg_problems = sum(problem_scores) / len(problem_scores)
-            calculated_overall = 100 - avg_problems
-        else:
-            calculated_overall = 70.0  # Default if no scores
-        
-        # Use ORBO's overall score if available, otherwise use calculated
-        overall_score = orbo_scores.get('overall_skin_health_score', 
-                                       orbo_scores.get('skin_health',
-                                                     orbo_scores.get('overall_score', calculated_overall)))
-        
-        logger.info(f"Overall skin health score determined: {overall_score} (calculated: {calculated_overall})")
-        
+        # Helper to pull scores while gracefully handling alternate concern names
+        def get_score(*keys: str, default: float = 70.0) -> float:
+            for key in keys:
+                value = orbo_scores.get(key)
+                if isinstance(value, (int, float)):
+                    return float(value)
+            return float(default)
+
+        # Calculate overall skin health score using ORBO-provided value when available,
+        # otherwise average all known concern scores.
+        numeric_scores = [float(v) for v in orbo_scores.values() if isinstance(v, (int, float))]
+        average_score = sum(numeric_scores) / len(numeric_scores) if numeric_scores else 70.0
+        overall_score = get_score(
+            'overall_skin_health_score',
+            'skin_health',
+            'overall_score',
+            default=average_score,
+        )
+
+        logger.info(
+            "Overall skin health score determined: %s (fallback average: %s)",
+            overall_score,
+            average_score,
+        )
+
         orbo_metrics = ORBOMetrics(
             overall_skin_health_score=overall_score,
-            hydration=orbo_scores.get('hydration', 70.0),
-            smoothness=100 - orbo_scores.get('uneven_skin', 30.0),  # Invert uneven_skin
-            radiance=100 - orbo_scores.get('skin_dullness', orbo_scores.get('shine', 30.0)),  # Use shine or dullness
-            dark_spots=100 - orbo_scores.get('dark_spots', 30.0),  # Invert for uniformity score
-            firmness=orbo_scores.get('firmness', 70.0),
-            fine_lines_wrinkles=100 - orbo_scores.get('face_wrinkles', orbo_scores.get('eye_wrinkles', 30.0)),  # Invert wrinkles
-            acne=100 - orbo_scores.get('acne', 30.0),  # Invert acne
-            dark_circles=100 - orbo_scores.get('dark_circle', orbo_scores.get('dark_circles', 30.0)),  # Handle both names
-            redness=100 - orbo_scores.get('redness', 30.0)  # Invert redness
+            hydration=get_score('hydration'),
+            smoothness=get_score('smoothness', 'texture', 'uneven_skin'),
+            radiance=get_score('radiance', 'skin_dullness', 'shine'),
+            dark_spots=get_score('dark_spots', 'pigmentation'),
+            firmness=get_score('firmness', 'elasticity'),
+            fine_lines_wrinkles=get_score('fine_lines_wrinkles', 'face_wrinkles', 'wrinkles', 'eye_wrinkles'),
+            acne=get_score('acne', 'blemishes'),
+            dark_circles=get_score('dark_circles', 'dark_circle'),
+            redness=get_score('redness', 'sensitivity'),
         )
+
+        metric_drop_events: List[Dict[str, Any]] = []
+        if previous_metrics:
+            current_metrics = orbo_metrics.dict()
+            metric_labels = {
+                'overall_skin_health_score': 'Overall Health',
+                'hydration': 'Hydration',
+                'smoothness': 'Smoothness',
+                'radiance': 'Radiance',
+                'dark_spots': 'Dark Spots',
+                'firmness': 'Firmness',
+                'fine_lines_wrinkles': 'Fine Lines',
+                'acne': 'Acne',
+                'dark_circles': 'Dark Circles',
+                'redness': 'Redness',
+            }
+
+            def as_float(value: Any) -> Optional[float]:
+                if isinstance(value, (int, float)):
+                    return float(value)
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return None
+
+            for key, label in metric_labels.items():
+                previous_value = as_float(previous_metrics.get(key))
+                current_value = as_float(current_metrics.get(key))
+
+                if previous_value is None or current_value is None:
+                    continue
+                if previous_value <= 0:
+                    continue
+
+                change_ratio = (current_value - previous_value) / previous_value
+                if change_ratio <= -0.05:  # More than 5% drop
+                    drop_percent = abs(change_ratio) * 100
+                    metric_drop_events.append({
+                        'key': key,
+                        'label': label,
+                        'previous': previous_value,
+                        'current': current_value,
+                        'drop_percent': drop_percent,
+                    })
+
+            metric_drop_events.sort(key=lambda item: item['drop_percent'], reverse=True)
         
         # Create ORBOResponse
         orbo_response = ORBOResponse(
@@ -1068,6 +1145,62 @@ async def save_orbo_sdk_result(
             logger.info(f"Verified saved metrics - Overall score: {saved_analysis['orbo_response']['metrics'].get('overall_skin_health_score')}")
         else:
             logger.error(f"WARNING: Metrics may not have been saved properly for analysis {analysis_id}")
+
+        if metric_drop_events:
+            top_drop = metric_drop_events[0]
+            title = f"{top_drop['label']} score dipped {top_drop['drop_percent']:.1f}%"
+
+            if len(metric_drop_events) == 1:
+                body = (
+                    f"{top_drop['label']} went from {top_drop['previous']:.0f} to {top_drop['current']:.0f} since your last scan. "
+                    "Open your insights for recovery tips."
+                )
+            else:
+                other_labels = [event['label'] for event in metric_drop_events[1:]]
+                if len(other_labels) == 1:
+                    extras = f"{other_labels[0]} also dipped."
+                else:
+                    extras = ", ".join(other_labels[:2])
+                    if len(other_labels) > 2:
+                        extras += " and others dipped."
+                    else:
+                        extras += " also dipped."
+                body = (
+                    f"{top_drop['label']} fell from {top_drop['previous']:.0f} to {top_drop['current']:.0f}. "
+                    f"{extras} Check today's analysis for guidance."
+                )
+
+            notification_data = {
+                'type': 'metric_drop',
+                'analysis_id': analysis_id,
+                'primary_metric': top_drop['key'],
+                'drop_percent': f"{top_drop['drop_percent']:.1f}",
+                'previous_score': f"{top_drop['previous']:.1f}",
+                'current_score': f"{top_drop['current']:.1f}",
+                'affected_metrics': json.dumps([
+                    {
+                        'metric': event['key'],
+                        'drop_percent': round(event['drop_percent'], 1),
+                        'previous': round(event['previous'], 1),
+                        'current': round(event['current'], 1),
+                    }
+                    for event in metric_drop_events
+                ]),
+            }
+
+            notification_sent = notification_service.send_push_notification(
+                user_id=current_user.id,
+                title=title,
+                body=body,
+                data=notification_data,
+                db=db,
+                notification_type='metric_drop'
+            )
+            logger.info(
+                "Metric drop notification processed for analysis %s (sent=%s)",
+                analysis_id,
+                notification_sent,
+            )
         
         # Update achievements: per-day photo count for streaks and totals
         try:
@@ -1478,18 +1611,28 @@ async def test_orbo_sdk_result(
             if concern:
                 orbo_scores[concern] = score
         
+        def get_score(*keys: str, default: float = 70.0) -> float:
+            for key in keys:
+                value = orbo_scores.get(key)
+                if isinstance(value, (int, float)):
+                    return float(value)
+            return float(default)
+
+        numeric_scores = [float(v) for v in orbo_scores.values() if isinstance(v, (int, float))]
+        average_score = sum(numeric_scores) / len(numeric_scores) if numeric_scores else 70.0
+
         # Map to SkinSense metrics (higher = better)
         metrics = {
-            'overall_skin_health_score': orbo_scores.get('skin_health', 70),
-            'hydration': orbo_scores.get('hydration', 70),
-            'smoothness': orbo_scores.get('smoothness', 70),
-            'radiance': 100 - orbo_scores.get('skin_dullness', 30),  # Invert
-            'dark_spots': 100 - orbo_scores.get('dark_spots', 30),  # Invert
-            'firmness': orbo_scores.get('firmness', 70),
-            'fine_lines_wrinkles': 100 - orbo_scores.get('face_wrinkles', 30),  # Invert
-            'acne': 100 - orbo_scores.get('acne', 30),  # Invert
-            'dark_circles': 100 - orbo_scores.get('dark_circle', 30),  # Invert
-            'redness': 100 - orbo_scores.get('redness', 30),  # Invert
+            'overall_skin_health_score': get_score('overall_skin_health_score', 'skin_health', 'overall_score', default=average_score),
+            'hydration': get_score('hydration'),
+            'smoothness': get_score('smoothness', 'texture', 'uneven_skin'),
+            'radiance': get_score('radiance', 'skin_dullness', 'shine'),
+            'dark_spots': get_score('dark_spots', 'pigmentation'),
+            'firmness': get_score('firmness', 'elasticity'),
+            'fine_lines_wrinkles': get_score('fine_lines_wrinkles', 'face_wrinkles', 'wrinkles', 'eye_wrinkles'),
+            'acne': get_score('acne', 'blemishes'),
+            'dark_circles': get_score('dark_circles', 'dark_circle'),
+            'redness': get_score('redness', 'sensitivity'),
         }
         
         # Create test user ID
@@ -2388,4 +2531,3 @@ async def get_calendar_ai_insights(
     except Exception as e:
         logger.error(f"Calendar insights failed: {e}")
         return {"insights": [{"title": "Insights unavailable", "body": "Please try again later.", "icon": "warning"}], "source": "error"}
-

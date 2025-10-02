@@ -285,13 +285,13 @@ class OrboSkinAnalysisService:
             'overall_skin_health_score': scores.get('skin_health', {}).get('score', 0),
             'hydration': scores.get('hydration', {}).get('score', 0),
             'smoothness': scores.get('smoothness', {}).get('score', 0),
-            'radiance': 100 - scores.get('skin_dullness', {}).get('score', 0),  # Invert dullness for radiance
-            'dark_spots': 100 - scores.get('dark_spots', {}).get('score', 0),   # Invert for uniformity
+            'radiance': scores.get('skin_dullness', {}).get('score', 0),
+            'dark_spots': scores.get('dark_spots', {}).get('score', 0),
             'firmness': scores.get('firmness', {}).get('score', 0),
-            'fine_lines_wrinkles': 100 - scores.get('face_wrinkles', {}).get('score', 0),  # Invert wrinkles
-            'acne': 100 - scores.get('acne', {}).get('score', 0),  # Invert acne
-            'dark_circles': 100 - scores.get('dark_circle', {}).get('score', 0),  # Invert dark circles
-            'redness': 100 - scores.get('redness', {}).get('score', 0),  # Invert redness
+            'fine_lines_wrinkles': scores.get('face_wrinkles', {}).get('score', 0),
+            'acne': scores.get('acne', {}).get('score', 0),
+            'dark_circles': scores.get('dark_circle', {}).get('score', 0),
+            'redness': scores.get('redness', {}).get('score', 0),
         }
         
         return {

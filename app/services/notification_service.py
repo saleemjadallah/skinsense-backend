@@ -36,17 +36,25 @@ class NotificationService:
         notification_type: str = "custom"
     ) -> bool:
         """Send push notification to a specific user"""
+        if db is None:
+            logger.error("Database handle required for send_push_notification")
+            return False
+
+        log_status = "failed"
+        error_message = None
         try:
             if not self.initialized:
                 self.initialize()
             
             if not self.initialized:
-                logger.error("Firebase not initialized")
+                error_message = "Firebase not initialized"
+                logger.error(error_message)
                 return False
             
             # Get user's FCM token from database
             user = db.users.find_one({"_id": user_id})
             if not user or not user.get("fcm_token"):
+                error_message = "No FCM token registered"
                 logger.warning(f"No FCM token found for user {user_id}")
                 return False
             
@@ -75,15 +83,27 @@ class NotificationService:
             # Send message
             response = messaging.send(message)
             logger.info(f"Successfully sent message: {response}")
-            
-            # Log notification
-            self._log_notification(user_id, title, body, db, notification_type)
-            
+            log_status = "sent"
             return True
             
         except Exception as e:
+            error_message = str(e)
             logger.error(f"Error sending push notification: {e}")
             return False
+        finally:
+            try:
+                self._log_notification(
+                    user_id=user_id,
+                    title=title,
+                    body=body,
+                    db=db,
+                    notification_type=notification_type,
+                    status=log_status,
+                    error_message=error_message,
+                    data=data,
+                )
+            except Exception as log_error:
+                logger.error(f"Failed to log notification: {log_error}")
     
     def send_bulk_notifications(
         self,
@@ -240,19 +260,31 @@ class NotificationService:
         title: str,
         body: str,
         db: Database,
-        notification_type: str = "custom"
+        notification_type: str = "custom",
+        status: str = "sent",
+        error_message: Optional[str] = None,
+        data: Optional[Dict[str, Any]] = None,
     ):
-        """Log sent notifications for analytics"""
-        db.notification_logs.insert_one({
+        """Log sent notifications for analytics and in-app history"""
+        if db is None:
+            return
+
+        entry: Dict[str, Any] = {
             "user_id": user_id,
             "title": title,
             "body": body,
             "type": notification_type,
             "sent_at": datetime.utcnow(),
-            "status": "sent",
+            "status": status,
+            "error_message": error_message,
             "is_read": False,
-            "read_at": None
-        })
+            "read_at": None,
+        }
+
+        if data:
+            entry["data"] = data
+
+        db.notification_logs.insert_one(entry)
     
     def get_notification_stats(
         self,

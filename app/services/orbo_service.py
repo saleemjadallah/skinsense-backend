@@ -147,26 +147,42 @@ class OrboSkinAnalysisService:
             # Extract scores and organize by parameter
             scores = {}
             for item in analysis_data['output_score']:
-                scores[item['concern']] = {
-                    'score': item['score'],
-                    'risk_level': item['riskLevel']
+                concern = item.get('concern')
+                if not concern:
+                    continue
+                scores[concern] = {
+                    'score': item.get('score'),
+                    'risk_level': item.get('riskLevel')
                 }
-            
+
+            numeric_scores = [
+                float(item.get('score'))
+                for item in analysis_data['output_score']
+                if isinstance(item.get('score'), (int, float))
+            ]
+            average_score = sum(numeric_scores) / len(numeric_scores) if numeric_scores else 70.0
+
+            def get_score(*keys: str, default: float = 70.0) -> float:
+                for key in keys:
+                    value = scores.get(key, {}).get('score')
+                    if isinstance(value, (int, float)):
+                        return float(value)
+                return float(default)
+
             # Map to SkinSense parameters (10 key metrics from CLAUDE.md)
-            # ORBO output_score provides scores where 100 = best, 0 = worst (confirmed by ORBO AI)
             skinsense_metrics = {
-                'overall_skin_health_score': scores.get('skin_health', {}).get('score', 0),
-                'hydration': scores.get('hydration', {}).get('score', 0),
-                'smoothness': scores.get('smoothness', {}).get('score', 0),
-                'radiance': scores.get('radiance', {}).get('score', 0) if 'radiance' in scores else scores.get('skin_dullness', {}).get('score', 0),  # Use radiance directly or dullness as fallback
-                'dark_spots': scores.get('dark_spots', {}).get('score', 0),   # Higher score = better (less dark spots)
-                'firmness': scores.get('firmness', {}).get('score', 0),
-                'fine_lines_wrinkles': scores.get('fine_lines_wrinkles', {}).get('score', 0) if 'fine_lines_wrinkles' in scores else scores.get('face_wrinkles', {}).get('score', 0),  # Higher score = better (fewer wrinkles)
-                'acne': scores.get('acne', {}).get('score', 0),  # Higher score = better (less acne)
-                'dark_circles': scores.get('dark_circles', {}).get('score', 0) if 'dark_circles' in scores else scores.get('dark_circle', {}).get('score', 0),  # Higher score = better (less dark circles)
-                'redness': scores.get('redness', {}).get('score', 0),  # Higher score = better (less redness)
+                'overall_skin_health_score': get_score('overall_skin_health_score', 'skin_health', 'overall_score', default=average_score),
+                'hydration': get_score('hydration'),
+                'smoothness': get_score('smoothness', 'texture', 'uneven_skin'),
+                'radiance': get_score('radiance', 'skin_dullness', 'shine'),
+                'dark_spots': get_score('dark_spots', 'pigmentation'),
+                'firmness': get_score('firmness', 'elasticity'),
+                'fine_lines_wrinkles': get_score('fine_lines_wrinkles', 'face_wrinkles', 'wrinkles', 'eye_wrinkles'),
+                'acne': get_score('acne', 'blemishes'),
+                'dark_circles': get_score('dark_circles', 'dark_circle'),
+                'redness': get_score('redness', 'sensitivity'),
             }
-            
+
             return {
                 'success': True,
                 'metrics': skinsense_metrics,

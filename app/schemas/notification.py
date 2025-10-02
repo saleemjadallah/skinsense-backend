@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, List, Literal
+from typing import Optional, Dict, List, Literal, Any
 from datetime import datetime
 
 
@@ -69,6 +69,7 @@ class NotificationLog(BaseModel):
     error_message: Optional[str] = None
     is_read: bool = False
     read_at: Optional[datetime] = None
+    data: Optional[Dict[str, Any]] = None
 
 
 class NotificationStats(BaseModel):
