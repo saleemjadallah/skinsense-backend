@@ -328,6 +328,7 @@ async def get_quick_recommendations(
     state: str = Query(..., description="User's state code (required)"),
     zip_code: str = Query(..., description="User's ZIP code (required)"),
     skin_type: Optional[str] = None,
+    limit: int = Query(6, ge=1, le=20, description="Number of product recommendations to return"),
     current_user: UserModel = Depends(get_current_active_user),
     db: Database = Depends(get_database)
 ):
@@ -345,7 +346,8 @@ async def get_quick_recommendations(
             user=current_user,
             user_location=user_location,
             db=db,
-            skin_type_override=skin_type
+            skin_type_override=skin_type,
+            limit=limit,
         )
         
         logger.info(f"Quick recommendations generated: {len(recommendations.get('recommendations', []))} products")
@@ -484,6 +486,7 @@ async def get_analysis_recommendations(
     city: str = Query(..., description="User's city (required)"),
     state: str = Query(..., description="User's state code (required)"), 
     zip_code: str = Query(..., description="User's ZIP code (required)"),
+    limit: int = Query(6, ge=1, le=20, description="Number of product recommendations to return"),
     current_user: UserModel = Depends(get_current_active_user),
     db: Database = Depends(get_database)
 ):
@@ -531,7 +534,7 @@ async def get_analysis_recommendations(
         skin_analysis=analysis["analysis_data"],
         user_location=user_location,
         db=db,
-        limit=5
+        limit=limit
     )
     
     return recommendations

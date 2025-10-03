@@ -18,13 +18,18 @@ from urllib.parse import quote, urlparse
 import aiohttp
 from bson import ObjectId
 from bs4 import BeautifulSoup
-from perplexity import AsyncPerplexity
+from perplexity import AsyncPerplexity, APIStatusError
 from pymongo.database import Database
 
 from app.core.config import settings
 from app.models.user import UserModel
 
 logger = logging.getLogger(__name__)
+
+
+class PerplexityAuthenticationError(Exception):
+    """Raised when the Perplexity Search API rejects the configured key."""
+    pass
 
 
 class PerplexityRecommendationService:
@@ -46,11 +51,17 @@ class PerplexityRecommendationService:
     """
 
     def __init__(self):
-        self.api_key = settings.PERPLEXITY_API_KEY
+        self.api_key = (
+            settings.PERPLEXITY_SEARCH_API_KEY
+            or settings.PERPLEXITY_API_KEY
+        )
 
         # Log API key status
         if self.api_key:
-            logger.info(f"Perplexity Search API configured: {self.api_key[:10]}...")
+            logger.info(
+                "Perplexity Search API configured: %s...",
+                self.api_key[:10],
+            )
         else:
             logger.warning("Perplexity API key not configured!")
 
@@ -162,6 +173,20 @@ class PerplexityRecommendationService:
                 "api_version": "search_api_v1"
             }
 
+        except PerplexityAuthenticationError as auth_error:
+            logger.error("Perplexity authentication error: %s", auth_error, exc_info=True)
+            fallback = self._create_fallback_products(skin_analysis, user_location)
+            return {
+                "recommendations": fallback,
+                "routine_suggestions": self._build_routine_from_products(fallback),
+                "shopping_list": self._generate_shopping_list(fallback),
+                "error": str(auth_error),
+                "source_mix": {"fallback": len(fallback), "total": len(fallback)},
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "location": user_location,
+                "api_version": "search_api_v1",
+            }
+
         except Exception as e:
             logger.error(f"Recommendation generation failed: {e}", exc_info=True)
             # Return fallback with error info
@@ -171,7 +196,7 @@ class PerplexityRecommendationService:
                 "routine_suggestions": self._build_routine_from_products(fallback),
                 "shopping_list": self._generate_shopping_list(fallback),
                 "error": str(e),
-                "source_mix": {"fallback": len(fallback)},
+                "source_mix": {"fallback": len(fallback), "total": len(fallback)},
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "location": user_location
             }
@@ -240,9 +265,32 @@ class PerplexityRecommendationService:
 
                 return unique_products[:limit]
 
+        except APIStatusError as api_error:
+            error_text = str(api_error)
+            status_code = getattr(api_error, "status_code", None)
+            logger.error(
+                f"[SEARCH API] Request failed with status {status_code}: {error_text}",
+                exc_info=True,
+            )
+
+            # Perplexity introduced a new Search API key requirement (HTTP 451)
+            cutoff_error = "api_key_created_before_search_api_cutoff"
+            if status_code == 451 or cutoff_error in error_text:
+                raise PerplexityAuthenticationError(
+                    "Perplexity Search API key is no longer valid. Generate a new Search API key "
+                    "and update the PERPLEXITY_SEARCH_API_KEY (or PERPLEXITY_API_KEY) environment variable."
+                ) from api_error
+
+            if status_code in {401, 403}:
+                raise PerplexityAuthenticationError(
+                    "Perplexity rejected the configured Search API key. Verify the key value and permissions."
+                ) from api_error
+
+            raise
+
         except Exception as e:
             logger.error(f"Multi-query search failed: {e}", exc_info=True)
-            return []
+            raise
 
     def _build_multi_queries(
         self,

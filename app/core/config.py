@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     
     # Perplexity
     PERPLEXITY_API_KEY: str = os.getenv("PERPLEXITY_API_KEY", "")
+    PERPLEXITY_SEARCH_API_KEY: str = os.getenv("PERPLEXITY_SEARCH_API_KEY", "")
     
     # ZeptoMail Email Service
     ZEPTOMAIL_SEND_TOKEN: Optional[str] = os.getenv("ZEPTOMAIL_SEND_TOKEN")

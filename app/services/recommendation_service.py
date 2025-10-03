@@ -123,7 +123,7 @@ class UnifiedRecommendationService:
         user: UserModel,
         user_location: Dict[str, str],
         db: Database,
-        limit: int = 5,
+        limit: int = 6,
     ) -> Dict[str, Any]:
         """
         Wrapper used by the ORBO SDK endpoint to fetch product recommendations
@@ -153,12 +153,17 @@ class UnifiedRecommendationService:
                 # Fall back to any legacy `analysis_data` shape
                 skin_analysis_payload = analysis_doc.get("analysis_data", {})
 
+            recommendation_limit = SubscriptionService.get_recommendation_limit(user)
+            effective_limit = limit
+            if recommendation_limit > 0:
+                effective_limit = min(limit, recommendation_limit)
+
             raw = await self.perplexity.get_personalized_recommendations(
                 user=user,
                 skin_analysis=skin_analysis_payload,
                 user_location=user_location,
                 db=db,
-                limit=limit,
+                limit=effective_limit,
             )
 
             # Normalize keys expected by API layer
@@ -176,7 +181,8 @@ class UnifiedRecommendationService:
         user: UserModel,
         user_location: Dict[str, str],
         db: Database,
-        skin_type_override: Optional[str] = None
+        skin_type_override: Optional[str] = None,
+        limit: int = 6,
     ) -> Dict[str, Any]:
         """
         Get quick product recommendations without full skin analysis
@@ -203,12 +209,17 @@ class UnifiedRecommendationService:
                 }
             
             # Get product recommendations
+            recommendation_limit = SubscriptionService.get_recommendation_limit(user)
+            effective_limit = limit
+            if recommendation_limit > 0:
+                effective_limit = min(limit, recommendation_limit)
+
             recommendations_result = await self.perplexity.get_personalized_recommendations(
                 user=user,
                 skin_analysis=skin_analysis,
                 user_location=user_location,
                 db=db,
-                limit=5
+                limit=effective_limit
             )
             
             # Flatten the structure - recommendations_result already contains the full structure
