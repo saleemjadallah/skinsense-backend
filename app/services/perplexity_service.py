@@ -665,6 +665,32 @@ class PerplexityRecommendationService:
     ):
         """Track user interactions with recommended products"""
         try:
+            product_data = product_data or {}
+
+            if interaction_type == "unsaved":
+                query = {
+                    "user_id": user_id,
+                    "interaction_type": "saved",
+                }
+
+                product_id = product_data.get("id")
+                if product_id:
+                    query["product_data.id"] = product_id
+                else:
+                    name = product_data.get("name")
+                    brand = product_data.get("brand")
+                    if name:
+                        query["product_data.name"] = name
+                    if brand:
+                        query["product_data.brand"] = brand
+
+                result = db.user_product_interactions.delete_many(query)
+                logger.info(
+                    "Removed %s saved product entries for user %s",
+                    result.deleted_count,
+                    user_id,
+                )
+
             interaction_data = {
                 "user_id": user_id,
                 "product_data": product_data,
