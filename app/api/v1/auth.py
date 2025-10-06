@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Request
 from fastapi.security import HTTPBearer
 from pymongo.database import Database
+from pymongo.errors import DuplicateKeyError
 from datetime import datetime, timedelta
 from bson import ObjectId
 
@@ -38,13 +39,20 @@ async def register(
 ):
     """Register new user"""
     
-    # Check if email already exists (usernames can be duplicate)
+    # Check if email already exists
     existing_user = db.users.find_one({"email": user_data.email})
     
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered"
+        )
+    
+    # Enforce unique username constraint
+    if db.users.find_one({"username": user_data.username}):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username already taken"
         )
     
     # Create new user
@@ -61,7 +69,20 @@ async def register(
     )
     
     # Insert user
-    result = db.users.insert_one(new_user.dict(by_alias=True))
+    try:
+        result = db.users.insert_one(new_user.dict(by_alias=True))
+    except DuplicateKeyError as exc:
+        key_pattern = (exc.details or {}).get("keyPattern", {}) if hasattr(exc, "details") else {}
+        if "email" in key_pattern:
+            detail = "Email already registered"
+        elif "username" in key_pattern:
+            detail = "Username already taken"
+        else:
+            detail = "Account already exists"
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=detail
+        )
     
     # Send verification OTP email
     background_tasks.add_task(
