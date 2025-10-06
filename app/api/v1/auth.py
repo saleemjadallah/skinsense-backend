@@ -4,6 +4,7 @@ from pymongo.database import Database
 from pymongo.errors import DuplicateKeyError
 from datetime import datetime, timedelta
 from bson import ObjectId
+import re
 
 from app.database import get_database
 from app.schemas.user import (
@@ -47,13 +48,24 @@ async def register(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered"
         )
+    # Derive username from first word of provided name when available
+    derived_username = user_data.username
+    if user_data.name:
+        first_word = user_data.name.strip().split()[0]
+        cleaned = re.sub(r"[^a-zA-Z0-9_]", "", first_word)
+        if cleaned:
+            derived_username = cleaned.lower()
+    else:
+        fallback_cleaned = re.sub(r"[^a-zA-Z0-9_]", "", derived_username)
+        derived_username = fallback_cleaned.lower() if fallback_cleaned else f"user_{secrets.token_hex(4)}"
+    
     # Create new user
     hashed_password = get_password_hash(user_data.password)
     verification_token = create_verification_token(user_data.email)
     
     new_user = UserModel(
         email=user_data.email,
-        username=user_data.username,
+        username=derived_username,
         name=user_data.name,
         password_hash=hashed_password,
         verification_token=verification_token,
@@ -78,7 +90,7 @@ async def register(
     background_tasks.add_task(
         email_service.send_otp_email_sync,
         user_data.email,
-        user_data.username
+        derived_username
     )
     
     # Create tokens
