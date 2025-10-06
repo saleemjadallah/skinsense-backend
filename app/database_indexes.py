@@ -17,7 +17,11 @@ def create_indexes():
     # User collection indexes
     logger.info("Creating user collection indexes...")
     db.users.create_index("email", unique=True)
-    db.users.create_index("username", unique=True)
+    try:
+        db.users.drop_index("username_1")
+    except Exception:
+        pass
+    db.users.create_index("username")
     db.users.create_index([("created_at", DESCENDING)])
     db.users.create_index("subscription.tier")
     

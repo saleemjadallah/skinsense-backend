@@ -47,14 +47,6 @@ async def register(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered"
         )
-    
-    # Enforce unique username constraint
-    if db.users.find_one({"username": user_data.username}):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already taken"
-        )
-    
     # Create new user
     hashed_password = get_password_hash(user_data.password)
     verification_token = create_verification_token(user_data.email)
@@ -75,8 +67,6 @@ async def register(
         key_pattern = (exc.details or {}).get("keyPattern", {}) if hasattr(exc, "details") else {}
         if "email" in key_pattern:
             detail = "Email already registered"
-        elif "username" in key_pattern:
-            detail = "Username already taken"
         else:
             detail = "Account already exists"
         raise HTTPException(

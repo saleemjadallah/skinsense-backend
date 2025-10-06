@@ -310,13 +310,6 @@ async def update_current_user(
         update_data = {"updated_at": datetime.utcnow()}
         
         if user_update.username is not None:
-            # Check if username is already taken
-            existing = db.users.find_one({"username": user_update.username, "_id": {"$ne": current_user.id}})
-            if existing:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Username already taken"
-                )
             update_data["username"] = user_update.username
             
         if user_update.email is not None:
