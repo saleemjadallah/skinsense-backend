@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request, HTTPException, status, Depends
 from pymongo.database import Database
+from bson import ObjectId
 from typing import Dict, Any
 from datetime import datetime
 import logging
@@ -94,14 +95,26 @@ async def _handle_subscription_activated(webhook_data: Dict[str, Any], db: Datab
             logger.error("No app_user_id in RevenueCat webhook")
             return
         
-        # Find user by RevenueCat user ID or email
-        user = db.users.find_one({
-            "$or": [
-                {"revenuecat_user_id": app_user_id},
-                {"email": app_user_id}  # RevenueCat might use email as user ID
-            ]
-        })
-        
+        # Find user by RevenueCat user ID, MongoDB ObjectId, or email
+        # Frontend uses MongoDB ObjectId as RevenueCat user ID
+        user = None
+
+        # First try to find by revenuecat_user_id field
+        user = db.users.find_one({"revenuecat_user_id": app_user_id})
+
+        # If not found, try to parse as MongoDB ObjectId (frontend uses user.id)
+        if not user:
+            try:
+                user_oid = ObjectId(app_user_id)
+                user = db.users.find_one({"_id": user_oid})
+                logger.info(f"Found user by MongoDB ObjectId: {app_user_id}")
+            except Exception as e:
+                logger.debug(f"app_user_id is not a valid ObjectId: {app_user_id}")
+
+        # Finally, try email as fallback
+        if not user:
+            user = db.users.find_one({"email": app_user_id})
+
         if not user:
             logger.warning(f"User not found for RevenueCat ID: {app_user_id}")
             return
@@ -151,14 +164,25 @@ async def _handle_subscription_deactivated(webhook_data: Dict[str, Any], db: Dat
             logger.error("No app_user_id in RevenueCat webhook")
             return
         
-        # Find user
-        user = db.users.find_one({
-            "$or": [
-                {"revenuecat_user_id": app_user_id},
-                {"email": app_user_id}
-            ]
-        })
-        
+        # Find user by RevenueCat user ID, MongoDB ObjectId, or email
+        user = None
+
+        # First try to find by revenuecat_user_id field
+        user = db.users.find_one({"revenuecat_user_id": app_user_id})
+
+        # If not found, try to parse as MongoDB ObjectId (frontend uses user.id)
+        if not user:
+            try:
+                user_oid = ObjectId(app_user_id)
+                user = db.users.find_one({"_id": user_oid})
+                logger.info(f"Found user by MongoDB ObjectId: {app_user_id}")
+            except Exception as e:
+                logger.debug(f"app_user_id is not a valid ObjectId: {app_user_id}")
+
+        # Finally, try email as fallback
+        if not user:
+            user = db.users.find_one({"email": app_user_id})
+
         if not user:
             logger.warning(f"User not found for RevenueCat ID: {app_user_id}")
             return
@@ -266,8 +290,17 @@ async def sync_subscription_status(
             "updated_at": datetime.utcnow()
         }
         
+        # Convert user_id to ObjectId if needed
+        try:
+            user_oid = ObjectId(user_id)
+        except:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid user_id format: {user_id}"
+            )
+
         result = db.users.update_one(
-            {"_id": user_id},
+            {"_id": user_oid},
             {
                 "$set": {
                     "subscription": subscription_data,
