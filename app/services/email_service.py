@@ -228,9 +228,9 @@ class EmailService:
 
         # Build logo HTML if URL is available
         logo_html = (
-            f'<img src="{self.logo_url}" alt="{settings.APP_NAME}" style="height: 50px; margin-bottom: 15px;" />'
+            f'<img src="{self.logo_url}" alt="{settings.APP_NAME}" style="height: 80px; margin-bottom: 20px;" />'
             if self.logo_url
-            else f'<h1 style="margin: 0;">{settings.APP_NAME}</h1>'
+            else f'<h1 style="margin: 0; font-size: 32px; color: #E91E63;">{settings.APP_NAME}</h1>'
         )
 
         html_content = f"""
@@ -254,10 +254,10 @@ class EmailService:
                     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
                 }}
                 .header {{
-                    background: linear-gradient(135deg, #E91E63 0%, #FF4081 100%);
-                    color: white;
-                    padding: 40px 30px;
+                    background: white;
+                    padding: 50px 30px 30px;
                     text-align: center;
+                    border-bottom: 1px solid #f0f0f0;
                 }}
                 .content {{
                     padding: 40px 30px;
@@ -293,9 +293,11 @@ class EmailService:
                     margin-top: 0;
                 }}
                 .tagline {{
-                    font-size: 14px;
-                    opacity: 0.9;
-                    margin-top: 10px;
+                    font-size: 18px;
+                    color: #666;
+                    margin-top: 15px;
+                    font-weight: 500;
+                    letter-spacing: 0.3px;
                 }}
             </style>
         </head>
@@ -360,9 +362,9 @@ class EmailService:
 
         # Build logo HTML if URL is available
         logo_html = (
-            f'<img src="{self.logo_url}" alt="{settings.APP_NAME}" style="height: 50px; margin-bottom: 15px;" />'
+            f'<img src="{self.logo_url}" alt="{settings.APP_NAME}" style="height: 80px; margin-bottom: 20px;" />'
             if self.logo_url
-            else f'<h1 style="margin: 0;">{settings.APP_NAME}</h1>'
+            else f'<h1 style="margin: 0; font-size: 32px; color: #E91E63;">{settings.APP_NAME}</h1>'
         )
 
         html_content = f"""
@@ -386,10 +388,10 @@ class EmailService:
                     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
                 }}
                 .header {{
-                    background: linear-gradient(135deg, #E91E63 0%, #FF4081 100%);
-                    color: white;
-                    padding: 40px 30px;
+                    background: white;
+                    padding: 50px 30px 30px;
                     text-align: center;
+                    border-bottom: 1px solid #f0f0f0;
                 }}
                 .content {{
                     padding: 40px 30px;
@@ -431,9 +433,11 @@ class EmailService:
                     margin-top: 0;
                 }}
                 .tagline {{
-                    font-size: 14px;
-                    opacity: 0.9;
-                    margin-top: 10px;
+                    font-size: 18px;
+                    color: #666;
+                    margin-top: 15px;
+                    font-weight: 500;
+                    letter-spacing: 0.3px;
                 }}
                 ul {{
                     margin: 10px 0;
@@ -448,7 +452,7 @@ class EmailService:
             <div class="email-container">
                 <div class="header">
                     {logo_html}
-                    <p class="tagline">Password Reset Request</p>
+                    <p class="tagline">Secure Your Account</p>
                 </div>
                 <div class="content">
                     <h2>Hi {username},</h2>
@@ -521,9 +525,9 @@ class EmailService:
 
         # Build logo HTML if URL is available
         logo_html = (
-            f'<img src="{self.logo_url}" alt="{settings.APP_NAME}" style="height: 50px; margin-bottom: 15px;" />'
+            f'<img src="{self.logo_url}" alt="{settings.APP_NAME}" style="height: 80px; margin-bottom: 20px;" />'
             if self.logo_url
-            else f'<h1 style="margin: 0;">Welcome to {settings.APP_NAME}!</h1>'
+            else f'<h1 style="margin: 0; font-size: 32px; color: #E91E63;">Welcome to {settings.APP_NAME}!</h1>'
         )
 
         html_content = f"""
@@ -547,10 +551,10 @@ class EmailService:
                     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
                 }}
                 .header {{
-                    background: linear-gradient(135deg, #E91E63 0%, #FF4081 100%);
-                    color: white;
-                    padding: 40px 30px;
+                    background: white;
+                    padding: 50px 30px 30px;
                     text-align: center;
+                    border-bottom: 1px solid #f0f0f0;
                 }}
                 .content {{
                     padding: 40px 30px;
@@ -604,10 +608,11 @@ class EmailService:
                     margin-bottom: 20px;
                 }}
                 .tagline {{
-                    font-size: 16px;
-                    opacity: 0.95;
-                    margin-top: 10px;
+                    font-size: 20px;
+                    color: #666;
+                    margin-top: 15px;
                     font-weight: 500;
+                    letter-spacing: 0.3px;
                 }}
                 ol {{
                     margin: 15px 0;
