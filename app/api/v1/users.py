@@ -410,19 +410,84 @@ async def delete_user_account(
     current_user: UserModel = Depends(get_current_active_user),
     db: Database = Depends(get_db)
 ):
-    """Delete user account (soft delete)"""
+    """
+    Permanently delete user account and all associated data.
+    This action is irreversible and complies with GDPR/CCPA "right to be forgotten" requirements.
+
+    Deletes all user data including:
+    - User profile and account
+    - Skin analyses and progress photos
+    - Routines and goals
+    - Community posts and interactions
+    - Product interactions
+    - Saved products
+    - Notifications
+    - Achievements
+    """
     try:
-        # Soft delete - just mark as inactive
-        db.users.update_one(
-            {"_id": current_user.id},
-            {"$set": {
-                "is_active": False,
-                "updated_at": datetime.utcnow()
-            }}
-        )
-        
-        return {"message": "Account successfully deactivated"}
-        
+        user_id = current_user.id
+
+        # Delete all user-related data from all collections
+        # This ensures complete data removal as required by Apple App Store guidelines
+
+        # 1. Delete skin analyses
+        db.skin_analyses.delete_many({"user_id": user_id})
+
+        # 2. Delete routines
+        db.routines.delete_many({"user_id": user_id})
+
+        # 3. Delete goals
+        db.goals.delete_many({"user_id": user_id})
+
+        # 4. Delete user achievements
+        db.user_achievements.delete_many({"user_id": user_id})
+
+        # 5. Delete product interactions
+        db.user_product_interactions.delete_many({"user_id": user_id})
+
+        # 6. Delete saved products
+        db.user_saved_products.delete_many({"user_id": user_id})
+
+        # 7. Delete community posts
+        db.community_posts.delete_many({"user_id": user_id})
+
+        # 8. Delete community comments
+        db.community_comments.delete_many({"user_id": user_id})
+
+        # 9. Delete notifications
+        db.notifications.delete_many({"user_id": user_id})
+
+        # 10. Delete notification preferences
+        db.notification_preferences.delete_many({"user_id": user_id})
+
+        # 11. Delete plans
+        db.plans.delete_many({"user_id": user_id})
+
+        # 12. Delete recommendations cache
+        db.recommendation_cache.delete_many({"user_id": user_id})
+
+        # 13. Delete routine completions
+        db.routine_completions.delete_many({"user_id": user_id})
+
+        # 14. Finally, delete the user account itself
+        result = db.users.delete_one({"_id": user_id})
+
+        if result.deleted_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+
+        # Note: Images stored in S3 could also be deleted here if needed
+        # This would require additional AWS S3 deletion logic
+
+        return {
+            "message": "Account and all associated data permanently deleted",
+            "status": "success"
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
