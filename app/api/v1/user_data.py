@@ -7,6 +7,7 @@ from bson import ObjectId
 from bson.errors import InvalidId
 import io
 import logging
+from urllib.parse import urlparse
 
 from ...database import get_database
 from ..deps import get_current_user
@@ -232,6 +233,20 @@ async def delete_user_images(
     user_identity_filter = {"$in": user_id_variants}
 
     image_urls: Set[str] = set()
+    external_image_urls: Set[str] = set()
+
+    def is_external_provider_url(url: str) -> bool:
+        """Check if URL belongs to a third-party provider we need to unlink."""
+        try:
+            host = urlparse(url).netloc.lower()
+        except Exception:
+            return False
+        if not host:
+            return False
+        external_domains = (
+            "orbo.ai",
+        )
+        return any(host.endswith(domain) for domain in external_domains)
 
     def collect_url(value: Any) -> bool:
         """Add URL to deletion set if it's managed by our storage."""
@@ -240,10 +255,13 @@ async def delete_user_images(
         url = value.strip()
         if not url:
             return False
-        if not s3_service.is_managed_url(url):
-            return False
-        image_urls.add(url)
-        return True
+        if s3_service.is_managed_url(url):
+            image_urls.add(url)
+            return True
+        if is_external_provider_url(url):
+            external_image_urls.add(url)
+            return True
+        return False
 
     try:
         # Gather analysis images (full-size, thumbnails, any internal copies)
@@ -313,7 +331,7 @@ async def delete_user_images(
             )
 
         # Clear analysis references for the images we attempted to delete
-        urls_list: List[str] = list(image_urls) if image_urls else []
+        urls_list: List[str] = list(image_urls.union(external_image_urls))
         analysis_updates = 0
         if urls_list:
             analysis_filter = {
@@ -358,25 +376,36 @@ async def delete_user_images(
         status = "success"
         message = "All images removed from storage."
 
-        if not image_urls:
+        total_identified = len(image_urls) + len(external_image_urls)
+        if total_identified == 0:
             status = "nothing_to_delete"
-            message = "No user-managed images were found."
+            message = "No user images were found."
         elif failed_urls:
             status = "partial_success"
             message = (
                 "Image references were cleared, but some files could not be removed from storage."
             )
-        elif not s3_service.has_s3_config:
+        elif image_urls and not s3_service.has_s3_config:
             status = "references_cleared"
             message = "Storage not configured; cleared saved references only."
+        elif image_urls and external_image_urls:
+            status = "success"
+            message = "Managed images deleted. External provider links were cleared."
+        elif image_urls:
+            status = "success"
+            message = "All images removed from storage."
+        else:
+            status = "references_cleared"
+            message = "External provider images were unlinked from your account. They will no longer appear in SkinSense."
 
         return {
             "status": status,
             "message": message,
             "data": {
-                "images_identified": len(image_urls),
+                "images_identified": total_identified,
                 "images_deleted": deleted_count,
                 "images_failed": len(failed_urls),
+                "external_images_identified": len(external_image_urls),
                 "analysis_records_updated": analysis_updates,
                 "community_posts_updated": community_updates,
                 "profile_fields_cleared": cleared_profile_fields,
