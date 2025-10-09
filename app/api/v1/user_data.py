@@ -379,24 +379,40 @@ async def delete_user_images(
         total_identified = len(image_urls) + len(external_image_urls)
         if total_identified == 0:
             status = "nothing_to_delete"
-            message = "No user images were found."
+            message = (
+                "No user images were found. If your glow timeline still shows old data, "
+                "try signing out and back in before taking new photos."
+            )
         elif failed_urls:
             status = "partial_success"
             message = (
-                "Image references were cleared, but some files could not be removed from storage."
+                "Image references were cleared, but some files could not be removed from storage. "
+                "To refresh your glow timeline, sign out and back in, then capture new photos."
             )
         elif image_urls and not s3_service.has_s3_config:
             status = "references_cleared"
-            message = "Storage not configured; cleared saved references only."
+            message = (
+                "Storage not configured; cleared saved references only. "
+                "Please sign out and back in before taking new photos to rebuild your glow timeline."
+            )
         elif image_urls and external_image_urls:
             status = "success"
-            message = "Managed images deleted. External provider links were cleared."
+            message = (
+                "Managed images deleted and external links cleared. "
+                "Sign out and back in, then take new photos to rebuild your glow timeline."
+            )
         elif image_urls:
             status = "success"
-            message = "All images removed from storage."
+            message = (
+                "All images removed from storage. "
+                "Sign out and back in, then take new photos to rebuild your glow timeline."
+            )
         else:
             status = "references_cleared"
-            message = "External provider images were unlinked from your account. They will no longer appear in SkinSense."
+            message = (
+                "External provider images were unlinked from your account. They will no longer appear in SkinSense. "
+                "Sign out and back in before taking new photos to rebuild your glow timeline."
+            )
 
         return {
             "status": status,
