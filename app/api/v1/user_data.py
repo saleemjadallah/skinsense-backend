@@ -2,15 +2,18 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from datetime import datetime
 import json
-from typing import Any, Dict
+from typing import Any, Dict, List, Set
 from bson import ObjectId
 import io
+import logging
 
 from ...database import get_database
 from ..deps import get_current_user
 from ...models.user import UserModel
+from ...services.s3_service import s3_service
 
 router = APIRouter(prefix="/user-data", tags=["user-data"])
+logger = logging.getLogger(__name__)
 
 @router.get("/export")
 async def export_user_data(
@@ -24,6 +27,7 @@ async def export_user_data(
         db = get_database()
         user_id = str(current_user.id)
         user_oid = ObjectId(user_id)
+        user_id_filter = {"$in": [user_oid, user_id]}
         
         # Prepare the export data
         export_data = {
@@ -57,7 +61,7 @@ async def export_user_data(
             export_data["user_profile"] = user
         
         # Get skin analyses
-        analyses = list(db.skin_analyses.find({"user_id": user_oid}))
+        analyses = list(db.skin_analyses.find({"user_id": user_id_filter}))
         for analysis in analyses:
             analysis["_id"] = str(analysis["_id"])
             analysis["user_id"] = str(analysis["user_id"])
@@ -68,7 +72,7 @@ async def export_user_data(
         export_data["skin_analyses"] = analyses
         
         # Get routines
-        routines = list(db.routines.find({"user_id": user_oid}))
+        routines = list(db.routines.find({"user_id": user_id_filter}))
         for routine in routines:
             routine["_id"] = str(routine["_id"])
             routine["user_id"] = str(routine["user_id"])
@@ -79,7 +83,7 @@ async def export_user_data(
         export_data["routines"] = routines
         
         # Get routine completions
-        completions = list(db.routine_completions.find({"user_id": user_oid}))
+        completions = list(db.routine_completions.find({"user_id": user_id_filter}))
         for completion in completions:
             completion["_id"] = str(completion["_id"])
             completion["user_id"] = str(completion["user_id"])
@@ -89,7 +93,7 @@ async def export_user_data(
         export_data["routine_completions"] = completions
         
         # Get goals
-        goals = list(db.goals.find({"user_id": user_oid}))
+        goals = list(db.goals.find({"user_id": user_id_filter}))
         for goal in goals:
             goal["_id"] = str(goal["_id"])
             goal["user_id"] = str(goal["user_id"])
@@ -100,7 +104,7 @@ async def export_user_data(
         export_data["goals"] = goals
         
         # Get user achievements
-        achievements = list(db.user_achievements.find({"user_id": user_oid}))
+        achievements = list(db.user_achievements.find({"user_id": user_id_filter}))
         for achievement in achievements:
             achievement["_id"] = str(achievement["_id"])
             achievement["user_id"] = str(achievement["user_id"])
@@ -111,7 +115,7 @@ async def export_user_data(
         export_data["achievements"] = achievements
         
         # Get user product interactions
-        products = list(db.user_product_interactions.find({"user_id": user_oid}))
+        products = list(db.user_product_interactions.find({"user_id": user_id_filter}))
         for product in products:
             product["_id"] = str(product["_id"])
             product["user_id"] = str(product["user_id"])
@@ -121,7 +125,7 @@ async def export_user_data(
         
         # Get community posts (if exists)
         if db.list_collection_names(filter={"name": "community_posts"}):
-            posts = list(db.community_posts.find({"user_id": user_oid}))
+            posts = list(db.community_posts.find({"user_id": user_id_filter}))
             for post in posts:
                 post["_id"] = str(post["_id"])
                 post["user_id"] = str(post["user_id"])
@@ -131,7 +135,7 @@ async def export_user_data(
         
         # Get notification preferences
         if db.list_collection_names(filter={"name": "notification_preferences"}):
-            notif_prefs = db.notification_preferences.find_one({"user_id": user_oid})
+            notif_prefs = db.notification_preferences.find_one({"user_id": user_id_filter})
             if notif_prefs:
                 notif_prefs["_id"] = str(notif_prefs["_id"])
                 notif_prefs["user_id"] = str(notif_prefs["user_id"])
@@ -169,15 +173,16 @@ async def get_export_summary(
         db = get_database()
         user_id = str(current_user.id)
         user_oid = ObjectId(user_id)
+        user_id_filter = {"$in": [user_oid, user_id]}
         
         summary = {
             "profile_data": bool(db.users.find_one({"_id": user_oid})),
-            "skin_analyses_count": db.skin_analyses.count_documents({"user_id": user_oid}),
-            "routines_count": db.routines.count_documents({"user_id": user_oid}),
-            "routine_completions_count": db.routine_completions.count_documents({"user_id": user_oid}),
-            "goals_count": db.goals.count_documents({"user_id": user_oid}),
-            "achievements_count": db.user_achievements.count_documents({"user_id": user_oid}),
-            "product_interactions_count": db.user_product_interactions.count_documents({"user_id": user_oid}),
+            "skin_analyses_count": db.skin_analyses.count_documents({"user_id": user_id_filter}),
+            "routines_count": db.routines.count_documents({"user_id": user_id_filter}),
+            "routine_completions_count": db.routine_completions.count_documents({"user_id": user_id_filter}),
+            "goals_count": db.goals.count_documents({"user_id": user_id_filter}),
+            "achievements_count": db.user_achievements.count_documents({"user_id": user_id_filter}),
+            "product_interactions_count": db.user_product_interactions.count_documents({"user_id": user_id_filter}),
             "estimated_size_kb": 0
         }
         
@@ -199,3 +204,171 @@ async def get_export_summary(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get export summary: {str(e)}")
+
+@router.delete("/images")
+async def delete_user_images(
+    current_user: UserModel = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """
+    Permanently delete all user-owned images (skin analyses, community posts, profile avatars) from S3 storage.
+    Clears database references regardless of S3 availability.
+    """
+    db = get_database()
+    user_id = str(current_user.id)
+    user_oid = ObjectId(user_id)
+
+    image_urls: Set[str] = set()
+
+    def collect_url(value: Any) -> bool:
+        """Add URL to deletion set if it's managed by our storage."""
+        if not isinstance(value, str):
+            return False
+        url = value.strip()
+        if not url:
+            return False
+        if not s3_service.is_managed_url(url):
+            return False
+        image_urls.add(url)
+        return True
+
+    try:
+        # Gather analysis images (full-size, thumbnails, any internal copies)
+        analyses_cursor = db.skin_analyses.find(
+            {
+                "user_id": {"$in": [user_oid, user_id]}
+            },
+            {
+                "image_url": 1,
+                "thumbnail_url": 1,
+                "internal_image_url": 1,
+            }
+        )
+        for analysis in analyses_cursor:
+            collect_url(analysis.get("image_url"))
+            collect_url(analysis.get("thumbnail_url"))
+            collect_url(analysis.get("internal_image_url"))
+
+        # Gather community post images
+        posts_cursor = db.community_posts.find(
+            {
+                "user_id": {"$in": [user_oid, user_id]}
+            },
+            {"image_url": 1}
+        )
+        for post in posts_cursor:
+            collect_url(post.get("image_url"))
+
+        # Gather profile images
+        user_document = db.users.find_one(
+            {"_id": user_oid},
+            {"profile.avatar_url": 1, "profile_image": 1}
+        )
+        user_updates: Dict[str, Any] = {}
+        cleared_profile_fields: List[str] = []
+
+        if user_document:
+            if collect_url(user_document.get("profile_image")):
+                user_updates["profile_image"] = None
+                cleared_profile_fields.append("profile_image")
+
+            profile_data = user_document.get("profile")
+            if isinstance(profile_data, dict) and collect_url(profile_data.get("avatar_url")):
+                user_updates["profile.avatar_url"] = None
+                cleared_profile_fields.append("profile.avatar_url")
+        else:
+            cleared_profile_fields = []
+
+        # Delete from S3 if configured
+        deleted_count = 0
+        failed_urls: List[str] = []
+        if image_urls and s3_service.has_s3_config:
+            for url in image_urls:
+                try:
+                    deleted = await s3_service.delete_image(url)
+                    if deleted:
+                        deleted_count += 1
+                    else:
+                        failed_urls.append(url)
+                except Exception as exc:
+                    logger.error("Failed to delete image '%s': %s", url, exc)
+                    failed_urls.append(url)
+        elif image_urls and not s3_service.has_s3_config:
+            logger.warning(
+                "S3 configuration missing while attempting to delete images for user %s. Only references will be cleared.",
+                user_id,
+            )
+
+        # Clear analysis references for the images we attempted to delete
+        urls_list: List[str] = list(image_urls) if image_urls else []
+        analysis_updates = 0
+        if urls_list:
+            analysis_filter = {
+                "user_id": {"$in": [user_oid, user_id]},
+                "$or": [
+                    {"image_url": {"$in": urls_list}},
+                    {"thumbnail_url": {"$in": urls_list}},
+                    {"internal_image_url": {"$in": urls_list}},
+                ],
+            }
+            analysis_update_result = db.skin_analyses.update_many(
+                analysis_filter,
+                {
+                    "$set": {
+                        "image_url": None,
+                        "thumbnail_url": None,
+                    },
+                    "$unset": {
+                        "internal_image_url": "",
+                    },
+                },
+            )
+            analysis_updates = analysis_update_result.modified_count
+
+        # Clear community post image references
+        community_updates = 0
+        if urls_list:
+            community_update_result = db.community_posts.update_many(
+                {
+                    "user_id": {"$in": [user_oid, user_id]},
+                    "image_url": {"$in": urls_list},
+                },
+                {"$set": {"image_url": None}},
+            )
+            community_updates = community_update_result.modified_count
+
+        # Update user profile document if necessary
+        if user_updates:
+            db.users.update_one({"_id": user_oid}, {"$set": user_updates})
+
+        # Prepare response payload
+        status = "success"
+        message = "All images removed from storage."
+
+        if not image_urls:
+            status = "nothing_to_delete"
+            message = "No user-managed images were found."
+        elif failed_urls:
+            status = "partial_success"
+            message = (
+                "Image references were cleared, but some files could not be removed from storage."
+            )
+        elif not s3_service.has_s3_config:
+            status = "references_cleared"
+            message = "Storage not configured; cleared saved references only."
+
+        return {
+            "status": status,
+            "message": message,
+            "data": {
+                "images_identified": len(image_urls),
+                "images_deleted": deleted_count,
+                "images_failed": len(failed_urls),
+                "analysis_records_updated": analysis_updates,
+                "community_posts_updated": community_updates,
+                "profile_fields_cleared": cleared_profile_fields,
+            },
+        }
+
+    except Exception as e:
+        logger.exception("Failed to delete user images for user %s", user_id)
+        raise HTTPException(status_code=500, detail=f"Failed to delete images: {str(e)}")

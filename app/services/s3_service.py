@@ -4,6 +4,7 @@ from typing import Optional
 import uuid
 from datetime import datetime
 import logging
+from urllib.parse import urlparse
 from PIL import Image
 # Try to enable HEIC/HEIF support if the optional dependency is present
 try:
@@ -179,12 +180,20 @@ class S3Service:
         Delete image from S3
         """
         try:
-            # Extract key from URL
-            if self.cloudfront_domain and self.cloudfront_domain in image_url:
-                key = image_url.split(f"https://{self.cloudfront_domain}/")[1]
-            else:
-                key = image_url.split(f"https://{self.bucket_name}.s3.{settings.aws_region}.amazonaws.com/")[1]
-            
+            if not image_url:
+                return False
+            if image_url.startswith("s3-disabled://"):
+                # Nothing was uploaded when S3 is disabled, treat as success
+                return True
+            if not self.has_s3_config or not self.s3_client:
+                logger.warning("S3 not configured, cannot delete image: %s", image_url)
+                return False
+
+            key = self._extract_key_from_url(image_url)
+            if not key:
+                logger.warning("Could not determine S3 key for URL: %s", image_url)
+                return False
+
             self.s3_client.delete_object(Bucket=self.bucket_name, Key=key)
             return True
             
@@ -281,6 +290,54 @@ class S3Service:
         except Exception as e:
             logger.error(f"Community image upload failed: {e}")
             raise
+
+    def is_managed_url(self, image_url: Optional[str]) -> bool:
+        """
+        Check if the provided URL points to this service's managed storage.
+        """
+        if not image_url or not isinstance(image_url, str):
+            return False
+        if image_url.startswith("s3-disabled://"):
+            return False
+        return self._extract_key_from_url(image_url) is not None
+
+    def _extract_key_from_url(self, image_url: str) -> Optional[str]:
+        """
+        Extract the object key from a URL pointing to this service's S3 bucket or CloudFront.
+        """
+        try:
+            parsed = urlparse(image_url.strip())
+            if not parsed.netloc:
+                return None
+
+            path = parsed.path.lstrip("/")
+            if not path:
+                return None
+
+            # CloudFront distribution
+            if self.cloudfront_domain:
+                if parsed.netloc == self.cloudfront_domain or self.cloudfront_domain in parsed.netloc:
+                    return path
+
+            # Direct S3 access patterns
+            if self.bucket_name:
+                bucket_hosts = {
+                    f"{self.bucket_name}.s3.{self.aws_region}.amazonaws.com",
+                    f"{self.bucket_name}.s3.amazonaws.com",
+                    self.bucket_name,
+                }
+                host = parsed.netloc
+                if host in bucket_hosts or host.startswith(f"{self.bucket_name}.s3"):
+                    return path
+
+            # Support s3://bucket/key format
+            if parsed.scheme == "s3" and parsed.netloc == self.bucket_name:
+                return path
+
+            return None
+        except Exception as exc:
+            logger.error(f"Failed to extract S3 key from URL '{image_url}': {exc}")
+            return None
 
 # Global instance
 s3_service = S3Service()
