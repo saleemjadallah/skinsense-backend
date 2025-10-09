@@ -2,8 +2,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from datetime import datetime
 import json
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 from bson import ObjectId
+from bson.errors import InvalidId
 import io
 import logging
 
@@ -14,6 +15,18 @@ from ...services.s3_service import s3_service
 
 router = APIRouter(prefix="/user-data", tags=["user-data"])
 logger = logging.getLogger(__name__)
+
+
+def _build_user_identity(user_id: str) -> Tuple[Optional[ObjectId], List[Any]]:
+    """Return ObjectId (if valid) and a list of acceptable identity variants."""
+    variants: List[Any] = [user_id]
+    user_oid: Optional[ObjectId] = None
+    try:
+        user_oid = ObjectId(user_id)
+        variants.append(user_oid)
+    except (InvalidId, TypeError):  # Support legacy string IDs
+        user_oid = None
+    return user_oid, variants
 
 @router.get("/export")
 async def export_user_data(
@@ -26,8 +39,8 @@ async def export_user_data(
     try:
         db = get_database()
         user_id = str(current_user.id)
-        user_oid = ObjectId(user_id)
-        user_id_filter = {"$in": [user_oid, user_id]}
+        user_oid, user_id_variants = _build_user_identity(user_id)
+        user_id_filter = {"$in": user_id_variants}
         
         # Prepare the export data
         export_data = {
@@ -44,7 +57,7 @@ async def export_user_data(
         }
         
         # Get user profile (exclude sensitive data)
-        user = db.users.find_one({"_id": user_oid})
+        user = db.users.find_one({"_id": {"$in": user_id_variants}})
         if user:
             # Remove sensitive fields
             user.pop("password_hash", None)
@@ -172,11 +185,11 @@ async def get_export_summary(
     try:
         db = get_database()
         user_id = str(current_user.id)
-        user_oid = ObjectId(user_id)
-        user_id_filter = {"$in": [user_oid, user_id]}
-        
+        user_oid, user_id_variants = _build_user_identity(user_id)
+        user_id_filter = {"$in": user_id_variants}
+
         summary = {
-            "profile_data": bool(db.users.find_one({"_id": user_oid})),
+            "profile_data": bool(db.users.find_one({"_id": {"$in": user_id_variants}})),
             "skin_analyses_count": db.skin_analyses.count_documents({"user_id": user_id_filter}),
             "routines_count": db.routines.count_documents({"user_id": user_id_filter}),
             "routine_completions_count": db.routine_completions.count_documents({"user_id": user_id_filter}),
@@ -215,7 +228,8 @@ async def delete_user_images(
     """
     db = get_database()
     user_id = str(current_user.id)
-    user_oid = ObjectId(user_id)
+    user_oid, user_id_variants = _build_user_identity(user_id)
+    user_identity_filter = {"$in": user_id_variants}
 
     image_urls: Set[str] = set()
 
@@ -235,7 +249,7 @@ async def delete_user_images(
         # Gather analysis images (full-size, thumbnails, any internal copies)
         analyses_cursor = db.skin_analyses.find(
             {
-                "user_id": {"$in": [user_oid, user_id]}
+                "user_id": user_identity_filter
             },
             {
                 "image_url": 1,
@@ -251,7 +265,7 @@ async def delete_user_images(
         # Gather community post images
         posts_cursor = db.community_posts.find(
             {
-                "user_id": {"$in": [user_oid, user_id]}
+                "user_id": user_identity_filter
             },
             {"image_url": 1}
         )
@@ -260,7 +274,7 @@ async def delete_user_images(
 
         # Gather profile images
         user_document = db.users.find_one(
-            {"_id": user_oid},
+            {"_id": {"$in": user_id_variants}},
             {"profile.avatar_url": 1, "profile_image": 1}
         )
         user_updates: Dict[str, Any] = {}
@@ -303,7 +317,7 @@ async def delete_user_images(
         analysis_updates = 0
         if urls_list:
             analysis_filter = {
-                "user_id": {"$in": [user_oid, user_id]},
+                "user_id": user_identity_filter,
                 "$or": [
                     {"image_url": {"$in": urls_list}},
                     {"thumbnail_url": {"$in": urls_list}},
@@ -329,7 +343,7 @@ async def delete_user_images(
         if urls_list:
             community_update_result = db.community_posts.update_many(
                 {
-                    "user_id": {"$in": [user_oid, user_id]},
+                    "user_id": user_identity_filter,
                     "image_url": {"$in": urls_list},
                 },
                 {"$set": {"image_url": None}},
@@ -338,7 +352,7 @@ async def delete_user_images(
 
         # Update user profile document if necessary
         if user_updates:
-            db.users.update_one({"_id": user_oid}, {"$set": user_updates})
+            db.users.update_one({"_id": {"$in": user_id_variants}}, {"$set": user_updates})
 
         # Prepare response payload
         status = "success"
