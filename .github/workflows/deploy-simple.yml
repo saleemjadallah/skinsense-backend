@@ -74,7 +74,9 @@ jobs:
         chmod 700 ~/.ssh
         printf '%s' "${{ secrets.EC2_KEY }}" | base64 --decode > ~/.ssh/deploy.pem
         chmod 600 ~/.ssh/deploy.pem
-        ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+        if ! ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null; then
+          echo "Warning: ssh-keyscan failed for ${{ secrets.EC2_HOST }}; continuing without host key pre-cache."
+        fi
     
     - name: Transfer and deploy
       run: |
