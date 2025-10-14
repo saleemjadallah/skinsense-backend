@@ -15,11 +15,28 @@ log() { echo -e "${BLUE}[$(date '+%H:%M:%S')]${NC} $1"; }
 success() { echo -e "${GREEN}✓${NC} $1"; }
 error() { echo -e "${RED}✗${NC} $1"; exit 1; }
 
+# Determine Docker Compose command (supports V1 and V2)
+if docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD_V2=true
+elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_CMD_V2=false
+else
+    error "Docker Compose is not installed. Install docker compose plugin or docker-compose binary."
+fi
+
+compose() {
+    if [ "${COMPOSE_CMD_V2}" = true ]; then
+        docker compose "$@"
+    else
+        docker-compose "$@"
+    fi
+}
+
 log "Starting simple deployment..."
 
 # Stop all containers (allows for quick updates)
 log "Stopping existing containers..."
-docker-compose -f docker-compose.yml down || true
+compose -f docker-compose.yml down || true
 
 # Force remove any conflicting containers (including old blue-green containers)
 log "Cleaning up any conflicting containers..."
@@ -43,8 +60,8 @@ docker network rm skinsense_network 2>/dev/null || true
 
 # Build and start fresh (force rebuild without cache)
 log "Building and starting containers (no cache)..."
-docker-compose -f docker-compose.yml build --no-cache
-docker-compose -f docker-compose.yml up -d
+compose -f docker-compose.yml build --no-cache
+compose -f docker-compose.yml up -d
 
 # Wait for containers to be ready
 log "Waiting for services to start..."

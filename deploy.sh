@@ -21,6 +21,23 @@ success() { echo -e "${GREEN}✓${NC} $1"; }
 warning() { echo -e "${YELLOW}⚠${NC} $1"; }
 error() { echo -e "${RED}✗${NC} $1"; exit 1; }
 
+# Determine Docker Compose command (supports V1 and V2)
+if docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD_V2=true
+elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_CMD_V2=false
+else
+    error "Docker Compose is not installed. Install docker compose plugin or docker-compose binary."
+fi
+
+compose() {
+    if [ "${COMPOSE_CMD_V2}" = true ]; then
+        docker compose "$@"
+    else
+        docker-compose "$@"
+    fi
+}
+
 # Cleanup function
 cleanup_resources() {
     log "Cleaning up Docker resources..."
@@ -99,20 +116,20 @@ main() {
     # Start Redis if not running
     if ! docker ps | grep -q skinsense_redis; then
         log "Starting Redis..."
-        docker-compose -f $COMPOSE_FILE up -d redis
+        compose -f $COMPOSE_FILE up -d redis
         sleep 5
     fi
     
     # Build new image
     log "Building $NEW_COLOR image..."
-    docker-compose -f $COMPOSE_FILE build backend-$NEW_COLOR
+    compose -f $COMPOSE_FILE build backend-$NEW_COLOR
     
     # Start new container
     log "Starting $NEW_COLOR container..."
     if [ "$NEW_COLOR" == "green" ]; then
-        docker-compose -f $COMPOSE_FILE --profile green up -d backend-green
+        compose -f $COMPOSE_FILE --profile green up -d backend-green
     else
-        docker-compose -f $COMPOSE_FILE up -d backend-blue
+        compose -f $COMPOSE_FILE up -d backend-blue
     fi
     
     # Wait for new container to be healthy
@@ -123,7 +140,7 @@ main() {
     # Start nginx if not running
     if ! docker ps | grep -q $NGINX_CONTAINER; then
         log "Starting nginx..."
-        docker-compose -f $COMPOSE_FILE up -d nginx
+        compose -f $COMPOSE_FILE up -d nginx
         sleep 3
         
         # Clean up any old active.conf files that might exist
@@ -163,8 +180,8 @@ main() {
     
     # Stop old container
     log "Stopping $CURRENT_COLOR container..."
-    docker-compose -f $COMPOSE_FILE stop backend-$CURRENT_COLOR || true
-    docker-compose -f $COMPOSE_FILE rm -f backend-$CURRENT_COLOR || true
+    compose -f $COMPOSE_FILE stop backend-$CURRENT_COLOR || true
+    compose -f $COMPOSE_FILE rm -f backend-$CURRENT_COLOR || true
     
     # Cleanup
     cleanup_resources
